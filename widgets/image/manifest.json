@@ -1,0 +1,17 @@
+{
+  "id": "image",
+  "name": "Imagem",
+  "version": 1,
+  "entry": "imageWidget.js",
+  "defaultGridSize": { "columns": 4, "rows": 4 },
+  "minGridSize": { "columns": 1, "rows": 1 },
+  "resizable": true,
+  "settings": {
+    "imagePath": { "type": "file", "label": "Imagem", "required": true },
+    "fit": {
+      "type": "choice",
+      "default": "cover",
+      "choices": ["cover"]
+    }
+  }
+}

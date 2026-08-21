@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.arcdesk" path="/org/gnome/shell/extensions/arcdesk/">
+
+    <key name="icon-size" type="i">
+      <default>64</default>
+      <range min="32" max="128"/>
+      <summary>Icon size</summary>
+      <description>Size in pixels of each desktop icon. The cell around it grows with the icon, so a larger size means fewer slots fit on screen.</description>
+    </key>
+
+    <key name="desk-theme" type="s">
+      <default>'dark'</default>
+      <choices>
+        <choice value="light"/>
+        <choice value="dark"/>
+      </choices>
+      <summary>Theme</summary>
+      <description>Whether the desktop chrome (labels, folder covers, folder panel) is painted for a light or a dark wallpaper. Labels stay white in both; the theme decides the density of the ink behind them.</description>
+    </key>
+
+    <key name="label-position" type="s">
+      <default>'below'</default>
+      <choices>
+        <choice value="below"/>
+        <choice value="hidden"/>
+      </choices>
+      <summary>Label position</summary>
+      <description>Where the item name is drawn. "below" puts it under the icon; "hidden" draws no label at all, leaving only the icon art.</description>
+    </key>
+
+    <key name="grid-origin" type="s">
+      <default>'top-left'</default>
+      <choices>
+        <choice value="top-left"/>
+        <choice value="top-right"/>
+      </choices>
+      <summary>Grid origin</summary>
+      <description>Which corner of the work area column zero sits in. Only affects where a newly added item lands and how the grid is drawn; stored item positions are always column/row indices counted from this origin.</description>
+    </key>
+
+    <key name="grid-bottom-margin" type="i">
+      <default>0</default>
+      <range min="0" max="256"/>
+      <summary>Grid bottom margin</summary>
+      <description>Space in logical pixels kept free below the last row of desktop icons. Increase it to reserve room for an overlay dock.</description>
+    </key>
+
+    <key name="hide-in-fullscreen" type="b">
+      <default>true</default>
+      <summary>Hide while a window is fullscreen</summary>
+      <description>Stop painting the desktop surface entirely while a window is fullscreen on the primary monitor. The surface already sits below every window, so this is a rendering optimisation rather than a visibility fix: a plain St.Widget is not a MetaCullable and keeps painting even when fully covered.</description>
+    </key>
+
+    <key name="double-click-to-open" type="b">
+      <default>true</default>
+      <summary>Open items with a double click</summary>
+      <description>When enabled, a single click selects an item and a double click opens it. When disabled, a single click opens it immediately and there is no selection step.</description>
+    </key>
+
+    <key name="debug-outline" type="b">
+      <default>false</default>
+      <summary>Show monitor surface outlines</summary>
+      <description>Draw a diagnostic border around each ArcDesk surface and log its monitor geometry, work area, scale and grid dimensions. Intended for troubleshooting multi-monitor layouts.</description>
+    </key>
+
+    <key name="warn-about-ding" type="b">
+      <default>true</default>
+      <summary>Warn when Desktop Icons NG is enabled</summary>
+      <description>Show a one-time notification when the DING extension is active, because both draw icons over the same pixels. Set to false once the user has been told, so the warning is not repeated every session.</description>
+    </key>
+
+    <key name="desk-items" type="as">
+      <default>[]</default>
+      <summary>Desktop items</summary>
+      <description>Ordered list of typed item ids living on the virtual desktop, each formatted as "type:value" — for example "app:firefox.desktop", "folder:9f2c1a4e-uuid" or "path:/home/user/Downloads". PUBLIC CONTRACT: other extensions (ArcDock) append to this key via Extension.lookupByUUID('ArcDesk@claudson').getSettings() when the user picks "add to desktop". Appending an id is enough — ArcDesk assigns it the first free slot on its own. Do not change the schema id, the path, or the entry format without updating ArcDock. An id whose type this version cannot render is preserved verbatim on write, so an older version never destroys a newer one's items.</description>
+    </key>
+
+    <key name="desk-placements" type="s">
+      <default>'{}'</default>
+      <summary>Item positions</summary>
+      <description>JSON object mapping each item id to its slot, as {"app:firefox.desktop": {"col": 0, "row": 2, "mon": 1}}. Stored as JSON because nested dictionaries in GSettings are awkward to manipulate from both the shell and the preferences process. "mon" is the monitor index the item lives on; there is one independent grid per monitor, so two items may share a col/row as long as their mon differs. A record with no "mon" was written by an older version and means the primary monitor; it is migrated once, on the first build that can resolve a primary index. All three fields are authoritative and are never rewritten because the current hardware cannot honour them: an item outside the current grid, or on a monitor index that no longer exists, is clamped or relocated FOR DISPLAY ONLY. Unplugging a monitor must not destroy the arrangement, and plugging it back in must restore it exactly. Not meant to be edited by hand.</description>
+    </key>
+
+    <key name="desk-folders" type="s">
+      <default>'{}'</default>
+      <summary>Virtual folders</summary>
+      <description>JSON object keyed by the BARE folder uuid, without the "folder:" prefix, as {"9f2c1a4e-uuid": {"name": "Games", "apps": ["steam.desktop"]}}. A folder with fewer than two resolvable members is not a folder: one member dissolves back into that app in the folder's own slot, zero members disappears. Not meant to be edited by hand.</description>
+    </key>
+
+    <key name="desk-widgets" type="s">
+      <default>'{}'</default>
+      <summary>Desktop widgets</summary>
+      <description>JSON object containing widget instances. Each record stores a registered widget type, monitor, logical x/y/width/height and type-specific config. Unknown widget types and fields are preserved so older ArcDesk versions do not destroy newer widgets.</description>
+    </key>
+
+  </schema>
+</schemalist>

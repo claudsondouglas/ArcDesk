@@ -1,0 +1,125 @@
+/* ArcDesk — the half of the stylesheet that is only ArcDesk's.
+ *
+ * Everything shared with ArcDock / ArcBar / ArcTab lives in
+ * ~/.local/share/arcsuite/common.css and is prepended to this file by
+ * sync.sh. Do not restate a shared value here — promote it there instead.
+ *
+ * What is left is exactly two kinds of rule:
+ *
+ *   1. numbers that MIRROR a constant in src/config.js, with a comment
+ *      naming the constant. They live in CSS because CSS is what produces
+ *      them; config.js carries the same number because the metrics code
+ *      has to PREDICT the size the cell will end up with. Two homes for one
+ *      number is normally a bug — here it is unavoidable, and the pair of
+ *      comments is the only thing keeping them in step.
+ *
+ *   2. geometry that is genuinely ArcDesk's and has no owner in JS.
+ *
+ * ArcDesk is the only extension consuming the `arc-*` vocabulary right now,
+ * so the classes it stamps are stacked in JS, e.g.
+ *
+ *     'arc-cell arcdesk-cell'
+ *     'arc-grid-label arc-grid-label-dark'
+ *     'arc-folder-panel arc-folder-panel-dark arc-e6 arc-e6-dark arcdesk-folder-panel'
+ */
+
+/* A célula de um item. Estes dois números são a fonte de verdade VISUAL do
+ * tamanho da célula; SIZE.CELL_PAD_X (16), SIZE.CELL_PAD_Y (14) e
+ * SIZE.LABEL_GAP (8) em src/config.js são a mesma medida do lado do JS, que
+ * precisa dela ANTES de a célula existir para calcular quantas colunas e
+ * linhas cabem na área de trabalho. Mudar um exige mudar o outro.
+ *
+ * Y menor que X porque o rótulo já cria respiro embaixo; o vão horizontal é
+ * o que separa um ícone do vizinho e precisa ser maior.
+ *
+ * A célula não pinta NADA — isso é `.arc-cell`, que zera todos os estados.
+ * Aqui só há caixa. E não há raio: o realce de seleção (`.arc-cell-selected`)
+ * acompanha a arte, cujo lado o usuário ajusta de 32 a 128px, então o raio
+ * vem por `actor.set_style()` de deskIcon.js. */
+.arcdesk-cell {
+    padding: 14px 16px;
+    spacing: 8px;
+}
+
+/* A faixa do rótulo tem altura FIXA: SIZE.LABEL_LINES (2) vezes
+ * SIZE.LABEL_LINE_HEIGHT (16) em src/config.js.
+ *
+ * Fixa e não medida do St.Label de propósito. Medir faria a célula de um
+ * nome curto ficar mais baixa que a da vizinha, e a grade inteira sairia do
+ * alinhamento por causa de um nome de uma palavra. A LARGURA não está aqui:
+ * ela é `metrics.labelWidth`, que o deskSurface calcula contra a largura da
+ * célula e entrega ao DeskIcon — um valor fixo aqui brigaria com ele. */
+.arcdesk-label {
+    height: 32px;
+}
+
+/* Painel de uma pasta aberta.
+ *
+ * Este raio NÃO espelha nada em config.js: a ArcDesk não tem PANEL_RADIUS,
+ * porque o único painel dela é este. Ele é o mesmo 28px do painel de pasta
+ * da ArcDock, e de propósito — é a mesma peça, adaptada, e um raio diferente
+ * faria duas pastas da mesma família parecerem de suítes diferentes.
+ *
+ * Cuidado com o `radius` de `applyGlass(panel, {radius: 32})` em
+ * folderPopup.js: aquilo é o SIGMA do Shell.BlurEffect, não um raio de
+ * canto — os dois números não têm relação e não devem ser "sincronizados".
+ * Se algum dia o blur ganhar um actor recuado próprio (o
+ * `.arc-blur-host`, como na dock e no alternador), o raio DELE é que sai
+ * daqui: 28 menos o recuo escolhido.
+ *
+ * O padding é assimétrico pelo mesmo motivo da célula: o conteúdo é uma
+ * grade de ícones com rótulo, que já respira mais embaixo do que dos lados. */
+.arcdesk-folder-panel {
+    border-radius: 28px;
+    padding: 22px 24px;
+}
+
+/* Diagnóstico opt-in: delimita o monitor inteiro entregue pelo
+ * MonitorConstraint. Borda real porque box-shadow inset é aceito pelo
+ * parser do St, mas não é pintado de forma confiável nesta camada. */
+.arc-desk-debug-outline {
+    border: 3px solid rgba(40, 255, 80, 0.95);
+}
+
+.arcdesk-widget-host {
+    /* Mesmo raio do painel principal da ArcDock. */
+    border-radius: 24px;
+    border: 1px solid transparent;
+    background-color: transparent;
+    box-shadow: none;
+    padding: 0;
+}
+
+.arcdesk-widget-host:hover {
+    border-color: rgba(255, 255, 255, 0.62);
+}
+
+.arcdesk-image-widget-content,
+.arcdesk-image-widget-image {
+    border-radius: 24px;
+}
+
+.arcdesk-calendar-widget {
+    border-radius: 24px;
+    padding: 14px 12px 12px;
+    spacing: 3px;
+    color: #252529;
+    background-color: rgba(250, 250, 250, 0.98);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.20);
+}
+
+.arcdesk-calendar-month { padding: 0 1px 1px; color: #f04747; font-size: 14px; font-weight: 700; }
+.arcdesk-calendar-weekday { width: 24px; height: 20px; color: #4b4b50; font-size: 11px; font-weight: 700; }
+.arcdesk-calendar-cell { width: 24px; height: 24px; }
+.arcdesk-calendar-day { width: 24px; height: 24px; color: #252529; font-size: 11px; font-weight: 600; border-radius: 12px; text-align: center; }
+.arcdesk-calendar-today { color: white; background-color: #f04747; }
+
+.arcdesk-widget-resize-handle {
+    icon-size: 20px;
+    margin: 8px;
+    padding: 3px;
+    border-radius: 8px;
+    color: transparent;
+    background-color: transparent;
+    box-shadow: none;
+}

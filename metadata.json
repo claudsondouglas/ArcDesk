@@ -1,0 +1,10 @@
+{
+  "uuid": "ArcDesk@claudson",
+  "name": "ArcDesk",
+  "description": "A virtual desktop surface for GNOME Shell. A grid of slots holding app icons and virtual folders, arranged freely and persisted in settings — never backed by a filesystem folder. Integrates with ArcDock's \"add to desktop\" action.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "session-modes": ["user"],
+  "settings-schema": "org.gnome.shell.extensions.arcdesk",
+  "url": "https://github.com/claudsondouglas/ArcDesk",
+  "version": 1
+}

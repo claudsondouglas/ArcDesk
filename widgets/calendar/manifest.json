@@ -1,0 +1,10 @@
+{
+  "id": "calendar",
+  "name": "Calendário",
+  "version": 1,
+  "entry": "calendarWidget.js",
+  "defaultGridSize": { "columns": 3, "rows": 2 },
+  "minGridSize": { "columns": 2, "rows": 2 },
+  "resizable": true,
+  "settings": {}
+}
