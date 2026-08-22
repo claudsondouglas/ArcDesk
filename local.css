@@ -94,32 +94,51 @@
     border-color: rgba(255, 255, 255, 0.62);
 }
 
+.arcdesk-widget-host.arcdesk-widget-editing {
+    border: 4px solid white;
+}
+
 .arcdesk-image-widget-content,
-.arcdesk-image-widget-image {
+.arcdesk-image-widget-image,
+.arcdesk-calendar-widget {
     border-radius: 24px;
 }
 
 .arcdesk-calendar-widget {
-    border-radius: 24px;
-    padding: 14px 12px 12px;
-    spacing: 3px;
+    padding: 11px 12px;
+    spacing: 1px;
     color: #252529;
     background-color: rgba(250, 250, 250, 0.98);
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.20);
 }
 
-.arcdesk-calendar-month { padding: 0 1px 1px; color: #f04747; font-size: 14px; font-weight: 700; }
-.arcdesk-calendar-weekday { width: 24px; height: 20px; color: #4b4b50; font-size: 11px; font-weight: 700; }
-.arcdesk-calendar-cell { width: 24px; height: 24px; }
-.arcdesk-calendar-day { width: 24px; height: 24px; color: #252529; font-size: 11px; font-weight: 600; border-radius: 12px; text-align: center; }
+.arcdesk-calendar-month { padding: 0 0 3px 2px; color: #f04747; font-size: 12px; font-weight: 700; }
+.arcdesk-calendar-weekday { width: 21px; height: 17px; color: #4b4b50; font-size: 9px; font-weight: 700; text-align: center; }
+.arcdesk-calendar-cell { width: 21px; height: 21px; }
+.arcdesk-calendar-day { width: 21px; height: 21px; color: #252529; border-radius: 11px; background-color: transparent; }
+.arcdesk-calendar-day-number { font-size: 10px; font-weight: 600; text-align: center; }
+.arcdesk-calendar-past { color: #c8c8cc; }
 .arcdesk-calendar-today { color: white; background-color: #f04747; }
+/* Nenhum texto do calendário leva sombra.
+ *
+ * O chão aqui NÃO é o wallpaper: é o cartão branco do próprio widget. A
+ * `.arc-t-shadow` da suíte existe para segurar texto claro sobre ARTE, e
+ * sobre este cartão ela só borra o glifo. `text-shadow` é herdada no St,
+ * então a regra no container já cobre os filhos — as classes vêm junto só
+ * para que uma regra de tema que case com uma delas não a reintroduza.
+ *
+ * `none` é a palavra-chave. Um `0 0 0 rgba(0, 0, 0, 0)` não remove nada:
+ * ele manda desenhar uma sombra invisível, e continua sendo uma sombra. */
+.arcdesk-calendar-widget,
+.arcdesk-calendar-month,
+.arcdesk-calendar-weekday,
+.arcdesk-calendar-day,
+.arcdesk-calendar-day-number,
+.arcdesk-calendar-widget StLabel {
+    text-shadow: none;
+}
 
-.arcdesk-widget-resize-handle {
-    icon-size: 20px;
-    margin: 8px;
-    padding: 3px;
-    border-radius: 8px;
-    color: transparent;
-    background-color: transparent;
-    box-shadow: none;
+.arcdesk-rename-box {
+    spacing: 12px;
+    min-width: 320px;
 }

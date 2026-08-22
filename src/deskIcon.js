@@ -770,13 +770,12 @@ class DeskIcon extends St.Widget {
         if (this._dark) label.add_style_class_name('arc-grid-label-dark');
         // Largura EXPLÍCITA (e não um max-width no CSS, que o St não honra de
         // forma confiável): é ela que garante que toda célula tenha a mesma
-        // largura, e é sobre ela que o Pango decide onde quebrar e cortar.
+        // largura, e é sobre ela que o Pango decide onde cortar.
         label.set_width(labelWidth);
         label.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
-        // Duas linhas: nomes de arquivo e de app na área de trabalho são
-        // longos, e uma linha só transforma metade da grade em reticências.
-        label.clutter_text.set_line_wrap(true);
-        label.clutter_text.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR);
+        // Uma linha mantém o slot quadrado; o excedente termina em reticências.
+        label.clutter_text.set_single_line_mode(true);
+        label.clutter_text.set_line_wrap(false);
         label.margin_top = SIZE.LABEL_GAP;
         // Altura EXPLÍCITA, pelo mesmo motivo da largura: é ela que deixa o
         // hover trocar o peso da fonte sem re-alocar nada, e é exatamente a

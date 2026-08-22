@@ -267,13 +267,14 @@ apply here verbatim.
 
 ### Persistence, and the `desk-items` public contract
 
-Three keys in `org.gnome.shell.extensions.arcdesk`:
+Data keys in `org.gnome.shell.extensions.arcdesk`:
 
 | key | type | shape |
 |---|---|---|
 | `desk-items` | `as` | ordered `["app:firefox.desktop", "folder:<uuid>", "path:/home/u/Downloads"]` |
 | `desk-placements` | `s` (JSON) | `{"app:firefox.desktop": {"col": 0, "row": 2, "mon": 1}}` |
 | `desk-folders` | `s` (JSON) | `{"<bare-uuid>": {"name": "Games", "apps": ["steam.desktop"]}}` |
+| `desk-item-names` | `s` (JSON) | custom display names keyed by the complete app/path item id |
 
 `mon` is the monitor index, and it is **optional on read**: a record without it was written by v1,
 which only ever drew on the primary monitor, so that is what its absence *means* — not "unknown".
@@ -506,10 +507,10 @@ folder's icon is fine there — a stalled preferences window is not a stalled co
 |---|---|---|
 | `SIZE.ICON` | 64 | px of the icon art; mirrored by the `icon-size` gschema key |
 | `SIZE.ICON_MIN` / `ICON_MAX` | 32 / 128 | clamp re-applied in JS — a tampered key must not ask for a 10x icon |
-| `SIZE.CELL_PAD_X` / `CELL_PAD_Y` | 16 / 14 | padding around the art inside a cell; `cellWidth = icon + 2*CELL_PAD_X` |
+| `SIZE.CELL_PAD_X` / `CELL_PAD_Y` | 24 / 12 | padding around the art inside a cell; with the default icon and one-line label the cell is 112 × 112 |
 | `SIZE.LABEL_GAP` | 8 | gap between the art and the first line of the label |
-| `SIZE.LABEL_LINE_HEIGHT` / `LABEL_LINES` | 16 / 2 | the label band; both are zero-weight when labels are hidden |
-| `SIZE.LABEL_MAX_WIDTH` | 104 | where a long name wraps, and the ellipsis point on line two |
+| `SIZE.LABEL_LINE_HEIGHT` / `LABEL_LINES` | 16 / 1 | the one-line label band; both are zero-weight when labels are hidden |
+| `SIZE.LABEL_MAX_WIDTH` | 104 | maximum label width before a long name is ellipsized |
 | `SIZE.GRID_MARGIN_X` / `GRID_MARGIN_Y` | 12 / 12 | inset of the grid inside the work area |
 | `SIZE.GRID_BOTTOM_MARGIN` / `_MAX` | 0 / 256 | configurable free strip below the final row |
 | `SIZE.SLOT_PAD` | 8 | how much bigger the slot plate is than the cell on every side — which is why `artRect()` measures the CELL, not the plate |

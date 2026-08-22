@@ -13,11 +13,12 @@ export const SIZE = Object.freeze({
     ICON: 64,
     ICON_MIN: 32,
     ICON_MAX: 128,
-    // Folga em volta do ícone dentro da célula — é o que separa um item do
-    // vizinho, já que a célula em si tem o tamanho do ícone mais a faixa do
-    // rótulo. Y menor que X porque o rótulo já cria respiro embaixo.
-    CELL_PAD_X: 16,
-    CELL_PAD_Y: 14,
+    // A célula padrão fica quadrada: 64px de arte + 8px de distância até o
+    // nome + 16px de uma linha + 2*12px de folga = 112px, a mesma largura de
+    // 64px de arte + 2*24px. O Y é menor porque o rótulo já ocupa a parte
+    // inferior da célula.
+    CELL_PAD_X: 24,
+    CELL_PAD_Y: 12,
     // Faixa do rótulo: GAP entre a arte e a primeira linha, altura de UMA
     // linha e quantas linhas cabem. A altura da célula soma
     // LABEL_GAP + LABEL_LINES*LABEL_LINE_HEIGHT, e não a altura medida do
@@ -25,7 +26,7 @@ export const SIZE = Object.freeze({
     // do vizinho e desalinharia a grade inteira.
     LABEL_GAP: 8,
     LABEL_LINE_HEIGHT: 16,
-    LABEL_LINES: 2,
+    LABEL_LINES: 1,
     // Largura a partir da qual o nome recebe ellipsis. Fixa, e não derivada
     // do ícone, pelo mesmo motivo: o que precisa ficar alinhado é a COLUNA.
     LABEL_MAX_WIDTH: 104,

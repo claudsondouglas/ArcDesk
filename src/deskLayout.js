@@ -6,6 +6,7 @@ import { SignalTracker } from './trackers.js';
 const KEY_ITEMS = 'desk-items';
 const KEY_PLACEMENTS = 'desk-placements';
 const KEY_FOLDERS = 'desk-folders';
+const KEY_NAMES = 'desk-item-names';
 
 const ID_SEPARATOR = ':';
 
@@ -115,6 +116,8 @@ export class DeskLayout {
         this._placements = {};
         /** @type {Object<string, {name: string, apps: string[]}>} por uuid CRU. */
         this._folders = {};
+        /** @type {Object<string, string>} nomes personalizados por id completo. */
+        this._names = {};
         /**
          * Posições EXIBIDAS pelo último build(), já no monitor certo, já
          * clampeadas na grade dele e já com colisões resolvidas. Vivem
@@ -141,6 +144,7 @@ export class DeskLayout {
             [KEY_ITEMS]: null,
             [KEY_PLACEMENTS]: null,
             [KEY_FOLDERS]: null,
+            [KEY_NAMES]: null,
         };
 
         this.reload();
@@ -151,6 +155,7 @@ export class DeskLayout {
         this._items = this._readItems();
         this._placements = this._readPlacements();
         this._folders = this._readFolders();
+        this._names = this._readNames();
     }
 
     /**
@@ -458,6 +463,8 @@ export class DeskLayout {
         this._items.splice(at, 1);
         const hadPlacement = this._placements[id] !== undefined;
         delete this._placements[id];
+        const hadName = this._names[id] !== undefined;
+        delete this._names[id];
 
         // Tirar uma pasta virtual da área de trabalho apaga o REGISTRO dela:
         // ela não existe em lugar nenhum além daqui (os apps continuam
@@ -474,6 +481,8 @@ export class DeskLayout {
             this._writePlacements();
         if (hadRecord)
             this._writeFolders();
+        if (hadName)
+            this._writeNames();
         return true;
     }
 
@@ -701,6 +710,21 @@ export class DeskLayout {
         return true;
     }
 
+    /** Renomeia somente o rótulo de um atalho de app ou diretório. */
+    renameItem(id, name) {
+        const parsed = parseDeskId(id);
+        if (!this._items.includes(id) ||
+            (parsed?.type !== DeskItemType.APP && parsed?.type !== DeskItemType.PATH))
+            return false;
+
+        const trimmed = typeof name === 'string' ? name.trim() : '';
+        if (!trimmed || trimmed === this._names[id])
+            return false;
+        this._names[id] = trimmed;
+        this._writeNames();
+        return true;
+    }
+
     /**
      * Primeiro slot livre do monitor `mon`, varrendo em COLUNA-MAJOR a partir
      * da origem (coluna 0, linhas 0..rows-1; depois coluna 1; ...).
@@ -771,6 +795,7 @@ export class DeskLayout {
         this._items = [];
         this._placements = {};
         this._folders = {};
+        this._names = {};
         this._displayById.clear();
         this._displayBySlot.clear();
         for (const key of Object.keys(this._pendingSelfWrite))
@@ -780,12 +805,13 @@ export class DeskLayout {
     // --- interno ---
 
     _appEntry(app, appId) {
+        const id = makeDeskId(DeskItemType.APP, appId);
         return {
             type: DeskItemType.APP,
-            id: makeDeskId(DeskItemType.APP, appId),
+            id,
             appId,
             app,
-            name: app.get_name() ?? '',
+            name: this._names[id] ?? app.get_name() ?? '',
         };
     }
 
@@ -796,7 +822,7 @@ export class DeskLayout {
             path,
             // Basename é aritmética de string em GLib, não I/O — nada aqui
             // toca o disco. O fallback para o caminho inteiro cobre '/'.
-            name: GLib.path_get_basename(path) || path,
+            name: this._names[id] ?? (GLib.path_get_basename(path) || path),
         };
     }
 
@@ -1009,6 +1035,20 @@ export class DeskLayout {
         return folders;
     }
 
+    _readNames() {
+        const parsed = this._readJson(KEY_NAMES);
+        if (!parsed)
+            return {};
+        const names = {};
+        for (const [id, name] of Object.entries(parsed)) {
+            const item = parseDeskId(id);
+            if ((item?.type === DeskItemType.APP || item?.type === DeskItemType.PATH) &&
+                typeof name === 'string' && name.trim())
+                names[id] = name.trim();
+        }
+        return names;
+    }
+
     _readJson(key) {
         if (!this._settings)
             return null;
@@ -1051,6 +1091,14 @@ export class DeskLayout {
         this._settings.set_string(KEY_FOLDERS, json);
     }
 
+    _writeNames() {
+        if (!this._settings)
+            return;
+        const json = _serializeNames(this._names);
+        this._pendingSelfWrite[KEY_NAMES] = json;
+        this._settings.set_string(KEY_NAMES, json);
+    }
+
     _ensureWatch() {
         if (this._watching || !this._settings)
             return;
@@ -1060,7 +1108,7 @@ export class DeskLayout {
         // mudança externa depois da assinatura.
         for (const key of Object.keys(this._pendingSelfWrite))
             this._pendingSelfWrite[key] = null;
-        for (const key of [KEY_ITEMS, KEY_PLACEMENTS, KEY_FOLDERS]) {
+        for (const key of [KEY_ITEMS, KEY_PLACEMENTS, KEY_FOLDERS, KEY_NAMES]) {
             this._signals.connect(this._settings, `changed::${key}`,
                 () => this._onKeyChanged(key));
         }
@@ -1333,5 +1381,12 @@ function _serializeFolders(folders) {
     const sorted = {};
     for (const uuid of Object.keys(folders).sort())
         sorted[uuid] = { name: folders[uuid].name, apps: folders[uuid].apps };
+    return JSON.stringify(sorted);
+}
+
+function _serializeNames(names) {
+    const sorted = {};
+    for (const id of Object.keys(names).sort())
+        sorted[id] = names[id];
     return JSON.stringify(sorted);
 }

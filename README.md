@@ -141,9 +141,11 @@ ArcDesk cuida sozinha de achar um lugar livre para o ícone novo.
 ## Widgets de imagem
 
 Abra **Preferências do ArcDesk → Widgets → Choose image…** para colocar uma
-imagem no monitor primário. Arraste a imagem para movê-la e arraste a alça do
-canto inferior direito para redimensioná-la. Ela nasce com **4 × 4 células**,
-movimento e tamanho encaixam na grade, e a imagem usa preenchimento `cover`
+imagem no monitor primário. Arraste a imagem para movê-la. Uma pressão longa
+ativa a borda branca de edição; então arraste qualquer borda ou canto para
+redimensionar. A prévia acompanha o ponteiro suavemente e encaixa no slot mais
+próximo ao soltar. Ela nasce com **4 × 4 células**, movimento e tamanho
+encaixam na grade, e a imagem usa preenchimento `cover`
 (ocupa toda a área e corta o excedente). As instâncias ficam na key
 `desk-widgets`; os metadados de cada tipo ficam em
 `widgets/<tipo>/manifest.json`, e tipos executáveis são registrados

@@ -88,6 +88,12 @@
       <description>JSON object keyed by the BARE folder uuid, without the "folder:" prefix, as {"9f2c1a4e-uuid": {"name": "Games", "apps": ["steam.desktop"]}}. A folder with fewer than two resolvable members is not a folder: one member dissolves back into that app in the folder's own slot, zero members disappears. Not meant to be edited by hand.</description>
     </key>
 
+    <key name="desk-item-names" type="s">
+      <default>'{}'</default>
+      <summary>Custom desktop item names</summary>
+      <description>JSON object mapping app and path item ids to user-defined display names. Renaming changes only the ArcDesk label and never the underlying application or directory.</description>
+    </key>
+
     <key name="desk-widgets" type="s">
       <default>'{}'</default>
       <summary>Desktop widgets</summary>

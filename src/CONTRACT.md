@@ -79,13 +79,14 @@ a logout to diagnose. They are restated here because ArcDesk reimplements the sa
 
 ## Persistence model
 
-Three GSettings keys, schema `org.gnome.shell.extensions.arcdesk` (already written and compiled):
+GSettings keys, schema `org.gnome.shell.extensions.arcdesk` (already written and compiled):
 
 | key | type | shape |
 |---|---|---|
 | `desk-items` | `as` | ordered `["app:firefox.desktop", "folder:<uuid>", "path:/home/u/Downloads"]` — the **public contract** ArcDock appends to |
 | `desk-placements` | `s` (JSON) | `{"app:firefox.desktop": {"col": 0, "row": 2}}` |
 | `desk-folders` | `s` (JSON) | `{"<bare-uuid>": {"name": "Games", "apps": ["steam.desktop"]}}` — keyed by the **bare** uuid, no `folder:` prefix |
+| `desk-item-names` | `s` (JSON) | custom display names keyed by the complete app/path item id |
 | `desk-widgets` | `s` (JSON) | widget instances keyed by UUID, with `type`, monitor, logical geometry and type-specific `config` |
 
 Rules that the model enforces and nobody else may reimplement:
@@ -126,8 +127,8 @@ preserved in the JSON even when this version cannot render them. Grid widgets pe
 Frozen constant objects only. No imports except `GObject`-free pure JS.
 
 ```js
-export const SIZE      // ICON:64, ICON_MIN:32, ICON_MAX:128, CELL_PAD_X:16, CELL_PAD_Y:14,
-                       // LABEL_GAP:8, LABEL_LINE_HEIGHT:16, LABEL_LINES:2, LABEL_MAX_WIDTH:104,
+export const SIZE      // ICON:64, ICON_MIN:32, ICON_MAX:128, CELL_PAD_X:24, CELL_PAD_Y:12,
+                       // LABEL_GAP:8, LABEL_LINE_HEIGHT:16, LABEL_LINES:1, LABEL_MAX_WIDTH:104,
                        // GRID_MARGIN_X:12, GRID_MARGIN_Y:12, GRID_BOTTOM_MARGIN:0,
                        // GRID_BOTTOM_MARGIN_MAX:256, SLOT_PAD:8, DOCK_RESERVE:96
 export const ItemType  // { APP:'app', FOLDER:'folder', PATH:'path' }
@@ -190,6 +191,7 @@ export class DeskLayout {
     addToFolder(folderId, appId) -> boolean
     removeFromFolder(folderId, appId, col, row) -> boolean
     renameFolder(folderId, name) -> boolean
+    renameItem(id, name) -> boolean
 
     firstFreeSlot(grid) -> {col,row} | null
 

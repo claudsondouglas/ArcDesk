@@ -5,10 +5,11 @@ const REGISTRY = Object.freeze({
     calendar: Object.freeze({
         name: 'Calendário',
         create: () => new CalendarWidget(),
-        defaultColSpan: 3,
+        defaultColSpan: 2,
         defaultRowSpan: 2,
         minWidth: 120,
         minHeight: 120,
+        resizable: false,
         configurable: false,
     }),
     image: Object.freeze({

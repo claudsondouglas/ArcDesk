@@ -22,10 +22,9 @@ function _validate(raw) {
     if (typeof raw.type !== 'string' || !raw.type) return null;
     const config = raw.config && typeof raw.config === 'object' &&
         !Array.isArray(raw.config) ? {...raw.config} : {};
-    // Migra uma vez os calendarios criados antes do tamanho padrao 3x2.
-    // O marcador preserva qualquer redimensionamento posterior do usuario.
-    const legacyCalendar = raw.type === 'calendar' && config.layoutVersion !== 3;
-    if (legacyCalendar) config.layoutVersion = 3;
+    // O calendario tem layout compacto e fixo de 2 colunas por 2 linhas.
+    const isCalendar = raw.type === 'calendar';
+    if (isCalendar) config.layoutVersion = 7;
     return {
         ...raw,
         type: raw.type,
@@ -43,9 +42,9 @@ function _validate(raw) {
             WIDGET_GEOMETRY.MIN_SIZE, WIDGET_GEOMETRY.MAX_SIZE),
         col: Number.isFinite(raw.col) ? _number(raw.col, 0, 0, 32768) : null,
         row: Number.isFinite(raw.row) ? _number(raw.row, 0, 0, 32768) : null,
-        colSpan: legacyCalendar ? 3 : _number(raw.colSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
+        colSpan: isCalendar ? 2 : _number(raw.colSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
             1, WIDGET_GEOMETRY.MAX_SPAN),
-        rowSpan: legacyCalendar ? 2 : _number(raw.rowSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
+        rowSpan: isCalendar ? 2 : _number(raw.rowSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
             1, WIDGET_GEOMETRY.MAX_SPAN),
         locked: raw.locked === true,
         config,
@@ -119,22 +118,29 @@ export class WidgetStore {
             colSpan: options.colSpan ?? WIDGET_GEOMETRY.DEFAULT_SPAN,
             rowSpan: options.rowSpan ?? WIDGET_GEOMETRY.DEFAULT_SPAN,
             locked: false,
-            config: type === 'calendar' ? {layoutVersion: 3} : {},
+            config: type === 'calendar' ? {layoutVersion: 7} : {},
         };
         this._write();
         return id;
     }
 
     updateGeometry(id, geometry) {
-        const current = this._records[id];
-        if (!current) return false;
-        const next = _validate({...current, ...geometry});
-        if (!next) return false;
-        const before = JSON.stringify(current);
-        this._records[id] = next;
-        if (before === JSON.stringify(next)) return false;
-        this._write();
-        return true;
+        return this.updateGeometries([{id, geometry}]);
+    }
+
+    /** Aplica uma reconciliação inteira com uma única escrita no GSettings. */
+    updateGeometries(updates) {
+        let changed = false;
+        for (const {id, geometry} of updates ?? []) {
+            const current = this._records[id];
+            if (!current) continue;
+            const next = _validate({...current, ...geometry});
+            if (!next || JSON.stringify(current) === JSON.stringify(next)) continue;
+            this._records[id] = next;
+            changed = true;
+        }
+        if (changed) this._write();
+        return changed;
     }
 
     updateConfig(id, config) {

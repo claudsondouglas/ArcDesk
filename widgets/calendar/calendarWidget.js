@@ -20,6 +20,7 @@ export class CalendarWidget {
             reactive: false,
             x_expand: true,
             y_expand: true,
+            clip_to_allocation: true,
         });
         this._render();
         this._timerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60, () => {
@@ -64,19 +65,22 @@ export class CalendarWidget {
 
         const firstWeekday = new Date(year, month, 1).getDay();
         const days = new Date(year, month + 1, 0).getDate();
-        let day = 1;
+        const previousMonthDays = new Date(year, month, 0).getDate();
         for (let week = 0; week < 6; week++) {
             const cells = [];
             for (let weekday = 0; weekday < 7; weekday++) {
-                if ((week === 0 && weekday < firstWeekday) || day > days) {
-                    cells.push({text: '', today: false});
-                } else {
-                    cells.push({text: String(day), today: day === now.getDate()});
-                    day++;
-                }
+                const monthDay = week * 7 + weekday - firstWeekday + 1;
+                const adjacent = monthDay < 1 || monthDay > days;
+                const shownDay = monthDay < 1
+                    ? previousMonthDays + monthDay
+                    : monthDay > days ? monthDay - days : monthDay;
+                cells.push({
+                    text: String(shownDay).padStart(2, '0'),
+                    today: !adjacent && monthDay === now.getDate(),
+                    past: adjacent || monthDay < now.getDate(),
+                });
             }
             this._actor.add_child(this._dayRow(cells));
-            if (day > days) break;
         }
     }
 
@@ -101,15 +105,24 @@ export class CalendarWidget {
                 layout_manager: new Clutter.BinLayout(),
                 x_expand: true,
             });
-            const label = new St.Label({
-                text: cell.text,
-                style_class: cell.today
-                    ? 'arcdesk-calendar-day arcdesk-calendar-today'
-                    : 'arcdesk-calendar-day',
+            const circle = new St.Widget({
+                style_class: [
+                    cell.text ? 'arcdesk-calendar-day' : '',
+                    cell.past ? 'arcdesk-calendar-past' : '',
+                    cell.today ? 'arcdesk-calendar-today' : '',
+                ].filter(Boolean).join(' '),
+                layout_manager: new Clutter.BinLayout(),
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
             });
-            holder.add_child(label);
+            const label = new St.Label({
+                text: cell.text,
+                style_class: 'arcdesk-calendar-day-number',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            circle.add_child(label);
+            holder.add_child(circle);
             row.add_child(holder);
         }
         return row;

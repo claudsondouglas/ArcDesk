@@ -141,6 +141,11 @@ export class DeskIconMenu {
                 () => this._policy.rename?.(this._item), 'rename folder');
         }
 
+        if (type === ItemType.APP || type === ItemType.PATH) {
+            this._addItem('Renomear',
+                () => this._policy.rename?.(this._item), 'rename shortcut');
+        }
+
         if (type === ItemType.APP) {
             const { isPinnedToDock, togglePinnedToDock, createShortcut } = this._policy;
             if (typeof isPinnedToDock === 'function' &&

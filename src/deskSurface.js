@@ -12,6 +12,7 @@ import { DeskBackgroundMenu } from './deskBackgroundMenu.js';
 import { DeskIcon } from './deskIcon.js';
 import { DeskSlot, SlotPaint } from './deskSlot.js';
 import { GhostFlight } from './ghostFlight.js';
+import { RenameDialog } from './renameDialog.js';
 import { SignalTracker } from './trackers.js';
 import { WidgetHost } from './widgetHost.js';
 import { availableWidgets } from './widgetRegistry.js';
@@ -188,6 +189,7 @@ export class DeskSurface {
         // Menu do fundo (botão direito no pixel vazio), criado só no
         // primeiro uso — ver DeskBackgroundMenu.
         this._bgMenu = null;
+        this._renameDialog = null;
 
         // --- Estado do arraste em curso ---
         // Retrato do que o DROP precisa saber, tirado enquanto o ícone
@@ -506,6 +508,8 @@ export class DeskSurface {
         // superfície, então é obrigatório fazê-lo à mão.
         safe(() => this._bgMenu?.destroy());
         this._bgMenu = null;
+        safe(() => this._renameDialog?.destroy());
+        this._renameDialog = null;
         safe(() => this._destroyWidgets());
         // Antes dos ícones: um fantasma no ar mora na camada do GhostFlight,
         // que é filha solta do uiGroup.
@@ -1024,9 +1028,10 @@ export class DeskSurface {
     /** Reconcilia somente os widgets deste monitor, sem remontar a grade. */
     refreshWidgets() {
         if (!this._actor || !this._built || !this._widgetStore) return;
-        const records = this._widgetStore.list().filter((record) =>
+        const ownRecords = this._widgetStore.list().filter((record) =>
             record.monitor === this._monitorIndex ||
             (record.monitor === null && this._primaryMonitor));
+        const records = this._resolveWidgetCollisions(ownRecords);
         const seen = new Set();
         for (const record of records) {
             seen.add(record.id);
@@ -1042,6 +1047,13 @@ export class DeskSurface {
                     scale: this._scaleFactor,
                     onGeometry: (geometry) => {
                         const placement = this._widgetGridPlacement(geometry);
+                        if (this._widgetPlacementCollides(placement, record.id)) {
+                            // O host foi movido apenas visualmente durante o
+                            // gesto. Reconstruir a geometria devolve-o ao
+                            // último bloco válido sem tocar na persistência.
+                            this.refreshWidgets();
+                            return;
+                        }
                         this._widgetStore?.updateGeometry(record.id, {
                             ...placement,
                             monitor: this._monitorIndex,
@@ -1079,6 +1091,100 @@ export class DeskSurface {
         this._raiseWidgets();
     }
 
+    /**
+     * Reserva toda a pegada dos widgets junto com as casas que já contêm
+     * ícones/pastas. Registros antigos que se sobrepõem são levados ao
+     * primeiro bloco livre; se a grade estiver cheia, ficam persistidos mas
+     * não são desenhados por cima de outro conteúdo.
+     */
+    _resolveWidgetCollisions(records) {
+        const m = this._metrics;
+        if (!m) return records;
+        const occupied = new Set();
+        for (let row = 0; row < m.rows; row++) {
+            for (let col = 0; col < m.cols; col++) {
+                if (this.slotAt(col, row)?.icon)
+                    occupied.add(`${col}:${row}`);
+            }
+        }
+
+        const resolved = [];
+        const updates = [];
+        for (const record of records) {
+            const span = {
+                colSpan: Math.max(1, Math.min(record.colSpan ?? 1, m.cols)),
+                rowSpan: Math.max(1, Math.min(record.rowSpan ?? 1, m.rows)),
+            };
+            let placement = {
+                col: Math.max(0, Math.min(record.col ?? 0, m.cols - span.colSpan)),
+                row: Math.max(0, Math.min(record.row ?? 0, m.rows - span.rowSpan)),
+                ...span,
+            };
+            if (this._widgetAreaOccupied(placement, occupied))
+                placement = this._firstFreeWidgetArea(span, occupied);
+            if (!placement) continue;
+
+            this._occupyWidgetArea(placement, occupied);
+            const next = {...record, ...placement};
+            resolved.push(next);
+            if (record.col !== placement.col || record.row !== placement.row ||
+                record.colSpan !== placement.colSpan ||
+                record.rowSpan !== placement.rowSpan) {
+                updates.push({id: record.id, geometry: placement});
+            }
+        }
+        this._widgetStore?.updateGeometries(updates);
+        return resolved;
+    }
+
+    _widgetPlacementCollides(placement, movingId) {
+        const m = this._metrics;
+        if (!m || !placement) return true;
+        const occupied = new Set();
+        for (let row = 0; row < m.rows; row++) {
+            for (let col = 0; col < m.cols; col++) {
+                if (this.slotAt(col, row)?.icon)
+                    occupied.add(`${col}:${row}`);
+            }
+        }
+        for (const record of this._widgetStore?.list() ?? []) {
+            if (record.id === movingId) continue;
+            const onThisMonitor = record.monitor === this._monitorIndex ||
+                (record.monitor === null && this._primaryMonitor);
+            if (!onThisMonitor || record.col === null || record.row === null) continue;
+            this._occupyWidgetArea(record, occupied);
+        }
+        return this._widgetAreaOccupied(placement, occupied);
+    }
+
+    _firstFreeWidgetArea(span, occupied) {
+        const m = this._metrics;
+        for (let col = 0; col <= m.cols - span.colSpan; col++) {
+            for (let row = 0; row <= m.rows - span.rowSpan; row++) {
+                const placement = {col, row, ...span};
+                if (!this._widgetAreaOccupied(placement, occupied))
+                    return placement;
+            }
+        }
+        return null;
+    }
+
+    _widgetAreaOccupied(placement, occupied) {
+        for (let col = placement.col; col < placement.col + placement.colSpan; col++) {
+            for (let row = placement.row; row < placement.row + placement.rowSpan; row++) {
+                if (occupied.has(`${col}:${row}`)) return true;
+            }
+        }
+        return false;
+    }
+
+    _occupyWidgetArea(placement, occupied) {
+        for (let col = placement.col; col < placement.col + placement.colSpan; col++) {
+            for (let row = placement.row; row < placement.row + placement.rowSpan; row++)
+                occupied.add(`${col}:${row}`);
+        }
+    }
+
     _widgetDisplayRecord(record) {
         const m = this._metrics;
         if (!m) return record;
@@ -1097,18 +1203,25 @@ export class DeskSurface {
         const footprintX = this._gridOrigin === GridOrigin.TOP_RIGHT
             ? position.x - (colSpan - 1) * m.cellWidth
             : position.x;
-        const width = colSpan * m.cellWidth - 2 * insetX;
-        // Mantém o mesmo respiro visual nos dois lados. Na origem direita a
-        // caixa da última célula avança além da área útil de propósito (para
-        // a arte do ícone caber); sem este clamp o widget herdava esse avanço
-        // e parecia colado à borda do monitor.
-        const minX = m.workLeft + m.marginX + insetX;
-        const maxX = m.workRight - m.marginX - insetX - width;
-        const widgetX = Math.max(minX, Math.min(maxX, footprintX + insetX));
-        const height = rowSpan * m.cellHeight - 2 * insetY;
-        const minY = m.workTop + m.marginY + insetY;
-        const maxY = m.workBottom - m.bottomMargin - m.marginY - insetY - height;
-        const widgetY = Math.max(minY, Math.min(maxY, position.y + insetY));
+        // A grade de ícones pode deixar a parte invisível das células das
+        // bordas ultrapassar a work area. Recortamos somente essa extremidade
+        // do widget. Deslocar a caixa inteira para dentro faria dois widgets
+        // em spans vizinhos perderem o respiro de 2 * inset entre eles.
+        const idealLeft = footprintX + insetX;
+        const idealRight = footprintX + colSpan * m.cellWidth - insetX;
+        const leftBound = m.workLeft + m.marginX + insetX;
+        const rightBound = m.workRight - m.marginX - insetX;
+        const widgetX = Math.max(leftBound, idealLeft);
+        const widgetRight = Math.min(rightBound, idealRight);
+        const width = Math.max(1, widgetRight - widgetX);
+
+        const idealTop = position.y + insetY;
+        const idealBottom = position.y + rowSpan * m.cellHeight - insetY;
+        const topBound = m.workTop + m.marginY + insetY;
+        const bottomBound = m.workBottom - m.bottomMargin - m.marginY - insetY;
+        const widgetY = Math.max(topBound, idealTop);
+        const widgetBottom = Math.min(bottomBound, idealBottom);
+        const height = Math.max(1, widgetBottom - widgetY);
         return {
             ...record,
             x: widgetX / this._scaleFactor,
@@ -1124,28 +1237,60 @@ export class DeskSurface {
         const px = (value) => value * this._scaleFactor;
         const insetX = m.cellWidth * WIDGET_CELL_INSET_RATIO;
         const insetY = m.cellHeight * WIDGET_CELL_INSET_RATIO;
-        const colSpan = Math.max(1, Math.min(m.cols,
-            Math.round((px(geometry.width) + 2 * insetX) / m.cellWidth)));
-        const rowSpan = Math.max(1, Math.min(m.rows,
-            Math.round((px(geometry.height) + 2 * insetY) / m.cellHeight)));
         const x = px(geometry.x);
         const y = px(geometry.y);
+        const right = x + px(geometry.width);
+        const bottom = y + px(geometry.height);
+
+        // Com células parcialmente fora da work area, a largura visível não
+        // basta para deduzir o span. Comparamos as duas bordas contra todos os
+        // retângulos válidos; isso também mantém o resize encaixado na grade.
         let bestCol = 0;
-        let bestDistance = Infinity;
-        for (let col = 0; col <= m.cols - colSpan; col++) {
-            const cell = this._cellPosition(col, 0);
-            const left = this._gridOrigin === GridOrigin.TOP_RIGHT
-                ? cell.x - (colSpan - 1) * m.cellWidth
-                : cell.x;
-            const distance = Math.abs(left + insetX - x);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                bestCol = col;
+        let colSpan = 1;
+        let bestHorizontalDistance = Infinity;
+        for (let span = 1; span <= m.cols; span++) {
+            for (let col = 0; col <= m.cols - span; col++) {
+                const cell = this._cellPosition(col, 0);
+                const footprint = this._gridOrigin === GridOrigin.TOP_RIGHT
+                    ? cell.x - (span - 1) * m.cellWidth
+                    : cell.x;
+                const candidateLeft = Math.max(
+                    m.workLeft + m.marginX + insetX,
+                    footprint + insetX);
+                const candidateRight = Math.min(
+                    m.workRight - m.marginX - insetX,
+                    footprint + span * m.cellWidth - insetX);
+                const distance = Math.abs(candidateLeft - x) +
+                    Math.abs(candidateRight - right);
+                if (distance < bestHorizontalDistance) {
+                    bestHorizontalDistance = distance;
+                    bestCol = col;
+                    colSpan = span;
+                }
             }
         }
-        const row = Math.max(0, Math.min(m.rows - rowSpan,
-            Math.round((y - m.originY - insetY) / m.cellHeight)));
-        return {col: bestCol, row, colSpan, rowSpan};
+
+        let bestRow = 0;
+        let rowSpan = 1;
+        let bestVerticalDistance = Infinity;
+        for (let span = 1; span <= m.rows; span++) {
+            for (let row = 0; row <= m.rows - span; row++) {
+                const top = Math.max(
+                    m.workTop + m.marginY + insetY,
+                    m.originY + row * m.cellHeight + insetY);
+                const candidateBottom = Math.min(
+                    m.workBottom - m.bottomMargin - m.marginY - insetY,
+                    m.originY + (row + span) * m.cellHeight - insetY);
+                const distance = Math.abs(top - y) +
+                    Math.abs(candidateBottom - bottom);
+                if (distance < bestVerticalDistance) {
+                    bestVerticalDistance = distance;
+                    bestRow = row;
+                    rowSpan = span;
+                }
+            }
+        }
+        return {col: bestCol, row: bestRow, colSpan, rowSpan};
     }
 
     _raiseWidgets() {
@@ -1392,11 +1537,28 @@ export class DeskSurface {
             open: (item) => this._guard(() => this._activate(item, null), 'menu open')(),
             openFolder: (item) =>
                 this._guard(() => this._activate(item, null), 'menu open folder')(),
-            // Renomear acontece DENTRO do painel da pasta, que é quem tem o
-            // campo de texto e o guarda de reentrância do `_finishing`.
-            // Duplicar a edição aqui seria uma segunda fonte de verdade para
-            // o nome de uma pasta que já pode estar aberta.
-            rename: (item) => this._guard(() => this._activate(item, null), 'menu rename')(),
+            rename: (item) => this._guard(() => {
+                if (item?.type === ItemType.FOLDER) {
+                    this._activate(item, null);
+                    return;
+                }
+                if (!item?.id) return;
+                // O PopupMenu só devolve o modal DEPOIS do callback de
+                // activate. Abre o diálogo no idle seguinte, já sem os dois
+                // grabs disputando teclado e ponteiro.
+                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    this._guard(() => {
+                        if (!this._actor || !this._layout)
+                            return;
+                        this._renameDialog ??= new RenameDialog();
+                        this._renameDialog.present(item.name, (name) => {
+                            if (this._layout?.renameItem(item.id, name))
+                                this._scheduleRefresh();
+                        });
+                    }, 'rename dialog open')();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }, 'menu rename')(),
             remove: (item) =>
                 this._guard(() => {
                     if (!item?.id) return;
