@@ -7,6 +7,7 @@ import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import { notifyArcDockAppClick } from './arcdockBridge.js';
 import { ANIM, DeskTheme, GridOrigin, ItemType, LabelPosition, SIZE } from './config.js';
 import { DeskBackgroundMenu } from './deskBackgroundMenu.js';
 import { DeskIcon } from './deskIcon.js';
@@ -1489,6 +1490,7 @@ export class DeskSurface {
             return;
         }
         try {
+            notifyArcDockAppClick(item.app);
             item.app?.activate();
         } catch (e) {
             logError(e, '[ArcDesk] app activate failed');

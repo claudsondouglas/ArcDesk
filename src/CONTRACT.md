@@ -232,6 +232,24 @@ export function lookupApp(appId) -> Shell.App | null
 
 Trimmed from ArcDock's version: **no fuzzy search, no `filterApps`** — ArcDesk has no search field.
 
+### `src/arcdockBridge.js`
+
+```js
+export function notifyArcDockAppClick(app) -> boolean
+```
+
+Notifies ArcDock's public API when ArcDesk activates a `Shell.App`. The bridge must check
+`Main.extensionManager.lookup('ArcDock@claudson')?.state === ExtensionState.ACTIVE` and repeat
+`Extension.lookupByUUID()` on every call — never retain the foreign extension object, because a
+disable/enable can leave stale ESM references in the process. Only primitive values (`appId`, name
+and the `arcdesk` source) cross into `recordExternalAppClick()`; ArcDock remains the sole owner of
+the queue and SQLite. An absent/inactive ArcDock is a no-op returning `false`, and every exception
+is caught and logged with the `[ArcDesk]` prefix.
+
+`DeskSurface._activate()` calls the bridge immediately before `Shell.App.activate()`. A double-click
+activation, Enter, or the menu's “Abrir” therefore counts once; the first selection-only click does
+not count.
+
 ### `src/deskSlot.js` — owner: **agent 2**
 
 ```js

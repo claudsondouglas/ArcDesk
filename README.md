@@ -210,6 +210,11 @@ realmente ativa; se você desligar a ArcDesk, eles somem do menu sozinhos.
 A ponte é a chave `desk-items`: a ArcDock só precisa acrescentar um id, e a ArcDesk cuida
 sozinha de achar um lugar livre para o ícone novo.
 
+No sentido inverso, quando um app é aberto por um ícone da ArcDesk, ela avisa a API pública da
+ArcDock com a origem `arcdesk`. A ArcDock mantém a escrita centralizada em
+`~/Documents/arc/apps.db`, junto dos cliques feitos diretamente na dock e no launcher. Se a ArcDock
+estiver desligada, a abertura continua normal e apenas esse evento de uso não é registrado.
+
 ## Widgets
 
 Um widget ocupa **células inteiras** da grade, e não pixels soltos: mover e redimensionar

@@ -36,6 +36,7 @@ src/
 ├── glassEffect.js        — applyGlass(): the blurred panel background.
 ├── deskLayout.js         — the model: desk-items / desk-placements / desk-folders. GLib + Gio only.
 ├── appList.js            — getInstalledApps() / lookupApp(): Shell.App resolution for the model.
+├── arcdockBridge.js      — reports ArcDesk app activations to ArcDock's public usage API.
 ├── deskManager.js        — DeskManager: the single DeskLayout, one DeskSurface per monitor, the
 │                           single FolderPopup, the FullscreenWatcher and the grab arbitration.
 ├── deskSlot.js           — DeskSlot: one fixed cell; paints EMPTY / TARGET / SWAP.
@@ -357,6 +358,14 @@ be revisited when the next version moves the ground again.
   `GLib.get_monotonic_time() - this._dragEndedAt` against `TIMING.DRAG_CLICK_GUARD_US`. A monotonic
   clock dies with the object; a timeout would be one more resource to cancel and one more way to
   leak.
+
+### Reporting app clicks to ArcDock
+
+`arcdockBridge.js` notifies `ArcDock@claudson.recordExternalAppClick()` when `_activate()` is about
+to activate an app. It passes primitive values and `source = 'arcdesk'`; ArcDock remains the only
+SQLite writer. Presence means `ExtensionState.ACTIVE`, and neither the extension manager state nor
+the foreign extension object is cached — both can become stale across extension rebases. Selection
+alone is not usage: a double-click activation, Enter, or the menu's “Abrir” counts exactly once.
 
 ### The dock does not reserve a full-width strip
 
