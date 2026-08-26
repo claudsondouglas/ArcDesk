@@ -222,18 +222,20 @@ sempre encaixa de volta nos slots. A pegada dele é reservada como se fossem cas
 então widget não fica em cima de ícone nem de outro widget: quem não couber é empurrado para
 a primeira área livre.
 
-São dois tipos, registrados em `src/widgetRegistry.js`:
+São quatro tipos, registrados em `src/widgetRegistry.js`:
 
 | Tipo | Tamanho inicial | Redimensiona | Configurável |
 |---|---|---|---|
 | **Imagem** | 4 × 4 células | sim, até o mínimo de 80 × 80 px | sim: o arquivo da imagem |
 | **Calendário** | 2 × 2 células | não | não |
+| **Uso do Codex** | 3 × 2 células | não | não |
+| **Uso do Claude Code** | 3 × 2 células | não | não |
 
 **Imagem.** Adicione em *Preferências → Widgets → Choose image…*, e ela nasce no monitor
 primário. (No menu do fundo, *"Adicionar widget → Imagem"* abre justamente essa aba, porque
 uma imagem sem arquivo não teria o que mostrar.) A imagem usa preenchimento `cover`: ocupa
-toda a área e corta o excedente. Uma **pressão longa** liga a borda de edição; com ela
-ligada, arraste qualquer borda ou canto para redimensionar. O botão direito dá *"Mudar
+toda a área e corta o excedente. Arraste-a diretamente de qualquer ponto; arraste uma borda
+ou canto para redimensionar. O botão direito dá *"Mudar
 imagem…"* e *"Remover widget"*.
 
 **Calendário.** Botão direito no fundo → *"Adicionar widget"* → *"Calendário"*, e ele nasce
@@ -241,7 +243,28 @@ no monitor onde você clicou. Mostra o mês corrente com o dia de hoje marcado e
 já passaram apagados, vira o mês sozinho, e um clique abre o Calendário do GNOME. Tamanho
 fixo de 2 × 2 células e nenhuma configuração: o botão direito só oferece *"Remover widget"*.
 
-Nos dois, arrastar move. Os metadados de cada tipo ficam em `widgets/<tipo>/manifest.json`;
+**Uso do Codex.** Lê a sessão local mais recente em `~/.codex/sessions` e apresenta duas barras
+independentes: a janela de sessão (atualmente 5 horas) e o limite semanal. Os dois valores vêm do
+evento de uso local do Codex; se uma das janelas ainda não estiver disponível, a outra continua
+sendo mostrada.
+
+**Uso do Claude Code.** Apresenta duas barras independentes: a janela de 5 horas e o limite
+semanal. O Claude Code entrega esses dados ao comando de `statusLine`; o bridge
+`widgets/claude/claudeStatusBridge.py` grava apenas modelo, percentuais e horários de reset em
+`~/.cache/arcdesk/claude-code/`. O snapshot consolidado preserva o último valor válido quando
+uma leitura omite as cotas; depois do horário de reset, o cartão passa a indicar a janela como
+livre até o Claude informar novo consumo. Para ativá-lo, adicione às configurações do Claude Code:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python3 /home/desktopo/.local/share/gnome-shell/extensions/ArcDesk@claudson/widgets/claude/claudeStatusBridge.py"
+  }
+}
+```
+
+Arrastar move qualquer widget. Os metadados de cada tipo ficam em `widgets/<tipo>/manifest.json`;
 as instâncias ficam na chave `desk-widgets`, cada uma com o tipo, o monitor, a geometria e a
 configuração própria. Um tipo que esta versão não conhece é preservado na escrita, então uma
 ArcDesk antiga não apaga o widget de uma nova.

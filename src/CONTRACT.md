@@ -118,6 +118,16 @@ place allowed to map persisted type names to executable classes. Unknown widget 
 preserved in the JSON even when this version cannot render them. Grid widgets persist `col`, `row`,
 `colSpan` and `rowSpan`; the image widget defaults to 4×4 cells and paints with `cover`.
 
+Moving a widget may cross monitor boundaries. `WidgetHost` keeps reporting pointer motion through
+`global.stage` after the pointer leaves its source surface and includes the release point plus the
+actor's stage-space rectangle in its geometry callback. The source `DeskSurface` selects the live
+monitor under that release point; for a foreign monitor, `DeskManager` routes the move to the
+destination surface. The destination converts the stage rectangle into its own local coordinates,
+snaps it against its own grid while preserving `colSpan`/`rowSpan`, checks icon and widget
+occupancy there, then persists the destination monitor index. A refused foreign move snaps back to
+the source. The manager reconciles all widget hosts from an idle callback: never destroy the source
+host synchronously inside its own `button-release-event` handler.
+
 ---
 
 ## Modules

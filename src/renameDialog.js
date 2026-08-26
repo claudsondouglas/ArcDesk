@@ -5,7 +5,9 @@ import St from 'gi://St';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 
 /** Diálogo reutilizável para editar o rótulo de um atalho. */
-export const RenameDialog = GObject.registerClass(
+export const RenameDialog = GObject.registerClass({
+    GTypeName: 'ArcDeskRenameDialog',
+},
 class RenameDialog extends ModalDialog.ModalDialog {
     constructor() {
         // A mesma superfície reutiliza o diálogo para vários atalhos. O

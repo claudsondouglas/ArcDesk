@@ -1,5 +1,4 @@
 import Clutter from 'gi://Clutter';
-import GLib from 'gi://GLib';
 import St from 'gi://St';
 
 import * as Cursor from './cursor.js';
@@ -8,11 +7,34 @@ import { widgetDefinition } from './widgetRegistry.js';
 import { WidgetMenu } from './widgetMenu.js';
 
 const MODE = Object.freeze({ MOVE: 'move', RESIZE: 'resize' });
-const LONG_PRESS_MS = 500;
 const DRAG_THRESHOLD = 6;
 const RESIZE_EDGE_PX = 14;
 
+/**
+ * Geometria entregue ao fim de um gesto.
+ *
+ * As quatro primeiras medidas continuam em coordenadas lógicas locais da
+ * superfície de origem. `releasePoint` e `stageRect` são físicos e vivem no
+ * stage, para que outra superfície possa receber um movimento sem depender
+ * da origem ou do scale factor dela.
+ *
+ * @typedef {object} WidgetGeometryChange
+ * @property {number} x
+ * @property {number} y
+ * @property {number} width
+ * @property {number} height
+ * @property {'move'|'resize'} mode
+ * @property {{x: number, y: number}} releasePoint
+ * @property {{x: number, y: number, width: number, height: number}} stageRect
+ */
+
 export class WidgetHost {
+    /**
+     * @param {object} params
+     * @param {object} params.record
+     * @param {number} [params.scale]
+     * @param {(geometry: WidgetGeometryChange) => void} [params.onGeometry]
+     */
     constructor(params = {}) {
         this._record = params.record;
         this._scale = Math.max(1, params.scale ?? 1);
@@ -23,18 +45,15 @@ export class WidgetHost {
         this._onMenuStateChanged = params.onMenuStateChanged ?? null;
         this._signals = new SignalTracker();
         this._gestureSignals = new SignalTracker();
-        this._editSignals = new SignalTracker();
         this._gesture = null;
-        this._pendingPress = null;
-        this._longPressId = 0;
-        this._editing = false;
         this._menu = null;
 
         const definition = widgetDefinition(this._record?.type);
         if (!definition) throw new Error(`Unknown widget type: ${this._record?.type}`);
         this._content = definition.create({config: this._record.config});
+        const usageWidget = this._record.type === 'codex' || this._record.type === 'claude';
         this._actor = new St.Widget({
-            style_class: 'arcdesk-widget-host',
+            style_class: `arcdesk-widget-host${usageWidget ? ' arcdesk-widget-host-usage' : ''}`,
             reactive: true,
             track_hover: true,
             clip_to_allocation: true,
@@ -52,15 +71,14 @@ export class WidgetHost {
             return this._press(event);
         });
         this._signals.connect(this._actor, 'motion-event', (_actor, event) => {
-            // Durante um gesto, o cursor pertence a _begin(): grabbing para
-            // movimento ou direcional para resize. O hover não pode
-            // sobrescrevê-lo a cada motion do próprio actor.
-            if (this._editing && !this._gesture)
+            // Fora de um gesto, as bordas já revelam que também podem ser
+            // redimensionadas. Não há um modo de edição intermediário.
+            if (!this._gesture)
                 Cursor.setResize(this._resizeEdges(...event.get_coords()) ?? {});
             return Clutter.EVENT_PROPAGATE;
         });
         this._signals.connect(this._actor, 'leave-event', () => {
-            if (this._editing && !this._gesture) Cursor.setDefault();
+            if (!this._gesture) Cursor.setDefault();
             return Clutter.EVENT_PROPAGATE;
         });
         this._signals.connect(this._actor, 'destroy', () => this._cleanup());
@@ -107,57 +125,8 @@ export class WidgetHost {
             return Clutter.EVENT_PROPAGATE;
 
         const [stageX, stageY] = event.get_coords();
-        if (!this._resizable) return this._begin(event, MODE.MOVE);
-        if (this._editing) {
-            const edges = this._resizeEdges(stageX, stageY);
-            if (edges) return this._begin(event, MODE.RESIZE, edges);
-            return this._begin(event, MODE.MOVE);
-        }
-
-        this._pendingPress = {stageX, stageY, activatedEditing: false};
-        this._gestureSignals.disconnectAll();
-        this._gestureSignals.connect(global.stage, 'motion-event', (_stage, motion) =>
-            this._pendingMotion(motion));
-        this._gestureSignals.connect(global.stage, 'button-release-event', () =>
-            this._pendingRelease());
-        this._cancelLongPress();
-        this._longPressId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LONG_PRESS_MS, () => {
-            this._longPressId = 0;
-            if (!this._pendingPress || !this._actor) return GLib.SOURCE_REMOVE;
-            this._pendingPress.activatedEditing = true;
-            this._setEditing(true);
-            return GLib.SOURCE_REMOVE;
-        });
-        return Clutter.EVENT_STOP;
-    }
-
-    _pendingMotion(event) {
-        if (!this._pendingPress) return Clutter.EVENT_PROPAGATE;
-        const [x, y] = event.get_coords();
-        if (Math.abs(x - this._pendingPress.stageX) <= DRAG_THRESHOLD &&
-            Math.abs(y - this._pendingPress.stageY) <= DRAG_THRESHOLD)
-            return Clutter.EVENT_STOP;
-
-        const press = this._pendingPress;
-        this._pendingPress = null;
-        this._cancelLongPress();
-        this._gesture = this._gestureFromPress(MODE.MOVE, press.stageX, press.stageY);
-        Cursor.setGrabbing();
-        return this._motion(event);
-    }
-
-    _pendingRelease() {
-        if (!this._pendingPress) return this._end();
-        const {activatedEditing} = this._pendingPress;
-        const wasEditing = this._editing;
-        this._pendingPress = null;
-        this._cancelLongPress();
-        this._gestureSignals.disconnectAll();
-        if (!activatedEditing) {
-            if (wasEditing) this._setEditing(false);
-            this._content?.activate?.();
-        }
-        return Clutter.EVENT_STOP;
+        const edges = this._resizeEdges(stageX, stageY);
+        return this._begin(event, edges ? MODE.RESIZE : MODE.MOVE, edges);
     }
 
     _resizeEdges(stageX, stageY) {
@@ -176,32 +145,10 @@ export class WidgetHost {
         return Object.values(edges).some(Boolean) ? edges : null;
     }
 
-    _setEditing(editing) {
-        this._editing = editing;
-        this._editSignals.disconnectAll();
-        if (editing) {
-            this._actor.add_style_class_name('arcdesk-widget-editing');
-            this._editSignals.connect(global.stage, 'captured-event', (_stage, event) => {
-                if (event.type() !== Clutter.EventType.BUTTON_PRESS)
-                    return Clutter.EVENT_PROPAGATE;
-                const [stageX, stageY] = event.get_coords();
-                const [actorX, actorY] = this._actor.get_transformed_position();
-                const [width, height] = this._actor.get_transformed_size();
-                if (stageX >= actorX && stageX <= actorX + width &&
-                    stageY >= actorY && stageY <= actorY + height)
-                    return Clutter.EVENT_PROPAGATE;
-                this._setEditing(false);
-                return Clutter.EVENT_PROPAGATE;
-            });
-        } else {
-            this._actor.remove_style_class_name('arcdesk-widget-editing');
-            Cursor.setDefault();
-        }
-    }
-
     _gestureFromPress(mode, stageX, stageY, edges = null) {
         return {
             mode, edges, stageX, stageY,
+            pointerX: stageX, pointerY: stageY,
             x: this._actor.x, y: this._actor.y,
             width: this._actor.width, height: this._actor.height,
             moved: false,
@@ -218,22 +165,24 @@ export class WidgetHost {
         this._gestureSignals.disconnectAll();
         this._gestureSignals.connect(global.stage, 'motion-event', (_stage, motion) =>
             this._motion(motion));
-        this._gestureSignals.connect(global.stage, 'button-release-event', () =>
-            this._end());
+        this._gestureSignals.connect(global.stage, 'button-release-event', (_stage, release) =>
+            this._end(release));
         return Clutter.EVENT_STOP;
     }
 
     _motion(event) {
         if (!this._gesture || !this._actor) return Clutter.EVENT_PROPAGATE;
         const [x, y] = event.get_coords();
+        this._gesture.pointerX = x;
+        this._gesture.pointerY = y;
         const dx = x - this._gesture.stageX;
         const dy = y - this._gesture.stageY;
         if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)
             this._gesture.moved = true;
         if (this._gesture.mode === MODE.MOVE) {
             this._actor.set_position(
-                Math.max(0, this._gesture.x + dx),
-                Math.max(0, this._gesture.y + dy));
+                this._gesture.x + dx,
+                this._gesture.y + dy);
         } else {
             const min = 80 * this._scale;
             const edges = this._gesture.edges;
@@ -262,10 +211,18 @@ export class WidgetHost {
         return Clutter.EVENT_STOP;
     }
 
-    _end() {
+    _end(event = null) {
         if (!this._gesture || !this._actor) return Clutter.EVENT_PROPAGATE;
-        const mode = this._gesture.mode;
-        const activate = this._gesture.mode === MODE.MOVE && !this._gesture.moved;
+        const gesture = this._gesture;
+        const mode = gesture.mode;
+        const activate = mode === MODE.MOVE && !gesture.moved;
+        let releaseX = gesture.pointerX;
+        let releaseY = gesture.pointerY;
+        try {
+            [releaseX, releaseY] = event?.get_coords?.() ?? [releaseX, releaseY];
+        } catch (_) {}
+        const [stageX, stageY] = this._actor.get_transformed_position();
+        const [stageWidth, stageHeight] = this._actor.get_transformed_size();
         this._gestureSignals.disconnectAll();
         this._gesture = null;
         if (activate) this._content?.activate?.();
@@ -274,28 +231,31 @@ export class WidgetHost {
             y: Math.round(this._actor.y / this._scale),
             width: Math.round(this._actor.width / this._scale),
             height: Math.round(this._actor.height / this._scale),
+            mode,
+            releasePoint: {x: releaseX, y: releaseY},
+            stageRect: {
+                x: stageX,
+                y: stageY,
+                width: stageWidth,
+                height: stageHeight,
+            },
         });
         if (mode === MODE.MOVE) Cursor.setDefault();
         return Clutter.EVENT_STOP;
     }
 
     _cleanup() {
-        if (this._editing || this._gesture)
+        if (this._gesture)
             Cursor.setDefault();
-        this._cancelLongPress();
         this._signals.disconnectAll();
         this._gestureSignals.disconnectAll();
-        this._editSignals.disconnectAll();
         this._gesture = null;
-        this._pendingPress = null;
+        try { this._content?.destroy?.(); } catch (e) {
+            logError(e, '[ArcDesk] widget content destroy failed');
+        }
+        this._content = null;
         this._menu?.destroy();
         this._menu = null;
-    }
-
-    _cancelLongPress() {
-        if (!this._longPressId) return;
-        GLib.source_remove(this._longPressId);
-        this._longPressId = 0;
     }
 
     destroy() {

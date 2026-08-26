@@ -1,4 +1,5 @@
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import { SIZE, DeskTheme, LabelPosition, GridOrigin } from './src/config.js';
 import { DeskManager } from './src/deskManager.js';
@@ -35,6 +36,7 @@ export default class ArcDeskExtension extends Extension {
             this._signalConnections = [];
             this._manager = null;
             this._settings = this.getSettings();
+            this._disableOverview();
 
             this._createManager();
 
@@ -76,6 +78,7 @@ export default class ArcDeskExtension extends Extension {
         try {
             this._enabled = false;
             this._disconnectSignals();
+            this._restoreOverview();
             this._destroyManager();
             this._settings = null;
         } catch (e) {
@@ -103,6 +106,46 @@ export default class ArcDeskExtension extends Extension {
             try { obj.disconnect(id); } catch (_) {}
         }
         this._signalConnections = [];
+    }
+
+    // --- Visão Geral -----------------------------------------------------
+
+    /**
+     * ArcDesk oferece uma área de trabalho permanente, então não deixa o
+     * Shell trocar para a Visão Geral. Salva os métodos originais para que
+     * desligar a extensão devolva ao GNOME exatamente o seu comportamento
+     * padrão. `hide()` não é substituído: Escape e o próprio Shell ainda
+     * podem fechar uma transição que já estivesse em andamento.
+     */
+    _disableOverview() {
+        try {
+            Main.overview.hide();
+
+            this._overviewMethods = {
+                show: Main.overview.show,
+                toggle: Main.overview.toggle,
+            };
+            Main.overview.show = () => {};
+            Main.overview.toggle = () => {};
+            log('[ArcDesk] overview disabled');
+        } catch (e) {
+            this._overviewMethods = null;
+            logError(e, '[ArcDesk] failed to disable overview');
+        }
+    }
+
+    _restoreOverview() {
+        if (!this._overviewMethods)
+            return;
+
+        try {
+            Main.overview.show = this._overviewMethods.show;
+            Main.overview.toggle = this._overviewMethods.toggle;
+            log('[ArcDesk] overview restored');
+        } catch (e) {
+            logError(e, '[ArcDesk] failed to restore overview');
+        }
+        this._overviewMethods = null;
     }
 
     // --- leitura das keys -------------------------------------------------

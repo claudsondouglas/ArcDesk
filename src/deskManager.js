@@ -1,3 +1,4 @@
+import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -109,6 +110,10 @@ export class DeskManager {
 
         /** @type {Map<number, DeskSurface>} */
         this._surfaces = new Map();
+        // Transferências de widget são concluídas dentro de
+        // button-release-event. A reconciliação global espera um idle para
+        // não destruir o host de origem enquanto o Clutter ainda o usa.
+        this._widgetRefreshId = 0;
 
         this._popup = null;
         // Superfície que abriu a pasta: é a fábrica de células do painel e o
@@ -215,6 +220,7 @@ export class DeskManager {
         this._unsubscribeWidgets = null;
         this._safe(() => this._fullscreen?.destroy(), 'fullscreen destroy');
         this._fullscreen = null;
+        this._safe(() => this._cancelWidgetRefresh(), 'widget refresh cancel');
         // O painel antes das superfícies: as células dele foram criadas por
         // uma superfície, e destruí-las depois de a dona morrer seria mexer
         // em política de dnd já zerada.
@@ -292,6 +298,8 @@ export class DeskManager {
                 this._safe(() => this._onDragOverHere(monitorIndex),
                     'drag over here'),
             onRefreshAll: () => this.refreshAll(),
+            onMoveWidget: (id, destinationIndex, stageRect) =>
+                this._moveWidgetToMonitor(id, destinationIndex, stageRect),
             onOpenPrefs: () => this._openPrefs(),
             widgetStore: this._widgetStore,
             primaryMonitor: monitorIndex === Main.layoutManager.primaryIndex,
@@ -386,6 +394,44 @@ export class DeskManager {
             if (index === monitorIndex) continue;
             this._safe(() => surface.showOriginHole(), 'show origin hole');
         }
+    }
+
+    /**
+     * Encaminha uma transferência de widget à superfície de destino.
+     *
+     * A superfície valida snap e ocupação e persiste o novo monitor. Só
+     * depois disso a remontagem de todos os hosts é agendada para um idle,
+     * fora do `button-release-event` do host de origem.
+     *
+     * @returns {boolean}
+     */
+    _moveWidgetToMonitor(id, monitorIndex, stageRect) {
+        try {
+            const destination = this._surfaces.get(monitorIndex);
+            if (!destination?.moveWidgetHere(id, stageRect)) return false;
+            this._scheduleWidgetRefresh();
+            return true;
+        } catch (e) {
+            logError(e, '[ArcDesk] cross-monitor widget move failed');
+            return false;
+        }
+    }
+
+    /** Agenda uma única reconciliação de widgets para todas as telas. */
+    _scheduleWidgetRefresh() {
+        if (this._widgetRefreshId) return;
+        this._widgetRefreshId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._widgetRefreshId = 0;
+            if (!this._widgetStore) return GLib.SOURCE_REMOVE;
+            this.refreshWidgets();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _cancelWidgetRefresh() {
+        if (!this._widgetRefreshId) return;
+        GLib.source_remove(this._widgetRefreshId);
+        this._widgetRefreshId = 0;
     }
 
     // --- Painel de pasta ---

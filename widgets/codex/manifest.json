@@ -1,0 +1,10 @@
+{
+  "id": "codex",
+  "name": "Uso do Codex",
+  "version": 1,
+  "entry": "codexWidget.js",
+  "defaultGridSize": { "columns": 3, "rows": 2 },
+  "minGridSize": { "columns": 3, "rows": 2 },
+  "resizable": false,
+  "settings": {}
+}

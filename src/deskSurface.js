@@ -115,6 +115,9 @@ export class DeskSurface {
      *   origem voltar a acender só o buraco dela.
      * @param {function} params.onRefreshAll () => void — remontagem de
      *   todas as grades, para mutações que podem atravessar monitores.
+     * @param {function} params.onMoveWidget (widgetId, monitorIndex,
+     *   stageRect) => boolean — pede ao gerente que encaminhe um widget
+     *   solto sobre outra tela para a superfície correspondente.
      * @param {boolean} params.debugOutline — borda de diagnóstico
      * @param {number} params.gridBottomMargin — margem lógica inferior
      * @param {function} params.onOpenPrefs   () => void
@@ -161,6 +164,7 @@ export class DeskSurface {
         this._onDropOnOther = fn(params.onDropOnOther);
         this._onDragOverHere = fn(params.onDragOverHere);
         this._onRefreshAll = fn(params.onRefreshAll);
+        this._onMoveWidget = fn(params.onMoveWidget);
         this._onOpenPrefs = fn(params.onOpenPrefs);
         this._widgetStore = params.widgetStore ?? null;
         this._primaryMonitor = params.primaryMonitor === true;
@@ -549,6 +553,7 @@ export class DeskSurface {
         this._onDropOnOther = null;
         this._onDragOverHere = null;
         this._onRefreshAll = null;
+        this._onMoveWidget = null;
         this._onOpenPrefs = null;
         this._settings = null;
         this._built = false;
@@ -1047,6 +1052,25 @@ export class DeskSurface {
                     record: displayRecord,
                     scale: this._scaleFactor,
                     onGeometry: (geometry) => {
+                        if (geometry.mode === 'move') {
+                            const destination = this._monitorAtStagePoint(
+                                geometry.releasePoint?.x,
+                                geometry.releasePoint?.y
+                            );
+                            if (destination !== null &&
+                                destination !== this._monitorIndex) {
+                                if (!this._onMoveWidget?.(
+                                    record.id,
+                                    destination,
+                                    geometry.stageRect
+                                )) {
+                                    // A tela de destino recusou a pegada;
+                                    // devolve o actor ao bloco persistido.
+                                    this.refreshWidgets();
+                                }
+                                return;
+                            }
+                        }
                         const placement = this._widgetGridPlacement(geometry);
                         if (this._widgetPlacementCollides(placement, record.id)) {
                             // O host foi movido apenas visualmente durante o
@@ -1158,6 +1182,46 @@ export class DeskSurface {
         return this._widgetAreaOccupied(placement, occupied);
     }
 
+    /**
+     * Recebe do gerente um widget solto nesta tela.
+     *
+     * O retângulo chega no espaço do stage. Ele é convertido para o espaço
+     * lógico local antes do snap; a pegada persistida é mantida exatamente,
+     * inclusive entre monitores com scale factors diferentes.
+     *
+     * @param {string} id
+     * @param {{x: number, y: number, width: number, height: number}} stageRect
+     * @returns {boolean} true somente quando a transferência foi persistida
+     */
+    moveWidgetHere(id, stageRect) {
+        if (!this._actor || !this._metrics || !this._widgetStore ||
+            !stageRect || !id)
+            return false;
+        const record = this._widgetStore.list().find((item) => item.id === id);
+        if (!record) return false;
+        const colSpan = Math.max(1, Math.round(record.colSpan ?? 1));
+        const rowSpan = Math.max(1, Math.round(record.rowSpan ?? 1));
+        if (colSpan > this._metrics.cols || rowSpan > this._metrics.rows)
+            return false;
+
+        const [surfaceStageX, surfaceStageY] =
+            this._actor.get_transformed_position();
+        const geometry = {
+            x: (stageRect.x - surfaceStageX) / this._scaleFactor,
+            y: (stageRect.y - surfaceStageY) / this._scaleFactor,
+            width: stageRect.width / this._scaleFactor,
+            height: stageRect.height / this._scaleFactor,
+        };
+        if (!Object.values(geometry).every(Number.isFinite)) return false;
+        const placement = this._widgetGridPlacement(geometry, {colSpan, rowSpan});
+        if (!placement || this._widgetPlacementCollides(placement, id))
+            return false;
+        return this._widgetStore.updateGeometry(id, {
+            ...placement,
+            monitor: this._monitorIndex,
+        });
+    }
+
     _firstFreeWidgetArea(span, occupied) {
         const m = this._metrics;
         for (let col = 0; col <= m.cols - span.colSpan; col++) {
@@ -1232,7 +1296,12 @@ export class DeskSurface {
         };
     }
 
-    _widgetGridPlacement(geometry) {
+    /**
+     * Encontra o bloco cuja caixa visível mais se aproxima da geometria.
+     * Sem `fixedSpan`, também infere a pegada (resize local); com ele, muda
+     * apenas coluna e linha (transferência entre monitores).
+     */
+    _widgetGridPlacement(geometry, fixedSpan = null) {
         const m = this._metrics;
         if (!m) return geometry;
         const px = (value) => value * this._scaleFactor;
@@ -1249,7 +1318,9 @@ export class DeskSurface {
         let bestCol = 0;
         let colSpan = 1;
         let bestHorizontalDistance = Infinity;
-        for (let span = 1; span <= m.cols; span++) {
+        const minColSpan = fixedSpan?.colSpan ?? 1;
+        const maxColSpan = fixedSpan?.colSpan ?? m.cols;
+        for (let span = minColSpan; span <= maxColSpan; span++) {
             for (let col = 0; col <= m.cols - span; col++) {
                 const cell = this._cellPosition(col, 0);
                 const footprint = this._gridOrigin === GridOrigin.TOP_RIGHT
@@ -1274,7 +1345,9 @@ export class DeskSurface {
         let bestRow = 0;
         let rowSpan = 1;
         let bestVerticalDistance = Infinity;
-        for (let span = 1; span <= m.rows; span++) {
+        const minRowSpan = fixedSpan?.rowSpan ?? 1;
+        const maxRowSpan = fixedSpan?.rowSpan ?? m.rows;
+        for (let span = minRowSpan; span <= maxRowSpan; span++) {
             for (let row = 0; row <= m.rows - span; row++) {
                 const top = Math.max(
                     m.workTop + m.marginY + insetY,
@@ -1292,6 +1365,19 @@ export class DeskSurface {
             }
         }
         return {col: bestCol, row: bestRow, colSpan, rowSpan};
+    }
+
+    /** Retorna o índice do monitor vivo que contém o ponto de stage. */
+    _monitorAtStagePoint(stageX, stageY) {
+        if (!Number.isFinite(stageX) || !Number.isFinite(stageY)) return null;
+        const monitors = Main.layoutManager.monitors ?? [];
+        for (let index = 0; index < monitors.length; index++) {
+            const monitor = monitors[index];
+            if (stageX >= monitor.x && stageX < monitor.x + monitor.width &&
+                stageY >= monitor.y && stageY < monitor.y + monitor.height)
+                return index;
+        }
+        return null;
     }
 
     _raiseWidgets() {
@@ -1561,6 +1647,10 @@ export class DeskSurface {
                     return GLib.SOURCE_REMOVE;
                 });
             }, 'menu rename')(),
+            changeIcon: (item) => this._guard(() => {
+                if (!item?.id) return;
+                this._chooseItemIcon(item.id);
+            }, 'menu change icon')(),
             remove: (item) =>
                 this._guard(() => {
                     if (!item?.id) return;
@@ -1576,6 +1666,39 @@ export class DeskSurface {
                     else if (this._menuIcon === icon) this._menuIcon = null;
                 }, 'menu state')(),
         };
+    }
+
+    _chooseItemIcon(id) {
+        const bus = Gio.DBus.session;
+        bus.call(
+            'org.freedesktop.portal.Desktop',
+            '/org/freedesktop/portal/desktop',
+            'org.freedesktop.portal.FileChooser',
+            'OpenFile',
+            new GLib.Variant('(ssa{sv})', ['', 'Escolher ícone', {
+                multiple: new GLib.Variant('b', false),
+                directory: new GLib.Variant('b', false),
+            }]),
+            new GLib.VariantType('(o)'), Gio.DBusCallFlags.NONE, -1, null,
+            (_connection, result) => {
+                let requestPath;
+                try { [requestPath] = bus.call_finish(result).deepUnpack(); }
+                catch (e) { logError(e, '[ArcDesk] icon chooser failed'); return; }
+                let subscription = 0;
+                subscription = bus.signal_subscribe(
+                    'org.freedesktop.portal.Desktop',
+                    'org.freedesktop.portal.Request', 'Response', requestPath, null,
+                    Gio.DBusSignalFlags.NONE,
+                    (_bus, _sender, _path, _iface, _signal, value) => {
+                        if (subscription) bus.signal_unsubscribe(subscription);
+                        const [response, results] = value.deepUnpack();
+                        if (response !== 0) return;
+                        const uri = results.uris?.[0];
+                        const path = uri ? Gio.File.new_for_uri(uri).get_path() : null;
+                        if (path && this._layout?.setItemIcon(id, path))
+                            this._scheduleRefresh();
+                    });
+            });
     }
 
     /**

@@ -1,4 +1,5 @@
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
@@ -793,6 +794,14 @@ class DeskIcon extends St.Widget {
      * construção, outra por arraste), então não vale cache.
      */
     _createIconActor(size) {
+        if (this._item?.customIcon) {
+            return new St.Icon({
+                gicon: new Gio.FileIcon({
+                    file: Gio.File.new_for_path(this._item.customIcon),
+                }),
+                icon_size: size,
+            });
+        }
         if (this._item?.type === ItemType.FOLDER) {
             const apps = (this._item.apps ?? [])
                 .map(entry => entry?.app)

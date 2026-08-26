@@ -1,0 +1,10 @@
+{
+  "id": "claude",
+  "name": "Uso do Claude Code",
+  "version": 1,
+  "entry": "claudeWidget.js",
+  "defaultGridSize": { "columns": 3, "rows": 2 },
+  "minGridSize": { "columns": 3, "rows": 2 },
+  "resizable": false,
+  "settings": {}
+}

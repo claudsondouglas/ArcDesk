@@ -7,6 +7,7 @@ const KEY_ITEMS = 'desk-items';
 const KEY_PLACEMENTS = 'desk-placements';
 const KEY_FOLDERS = 'desk-folders';
 const KEY_NAMES = 'desk-item-names';
+const KEY_ICONS = 'desk-item-icons';
 
 const ID_SEPARATOR = ':';
 
@@ -145,6 +146,7 @@ export class DeskLayout {
             [KEY_PLACEMENTS]: null,
             [KEY_FOLDERS]: null,
             [KEY_NAMES]: null,
+            [KEY_ICONS]: null,
         };
 
         this.reload();
@@ -156,6 +158,7 @@ export class DeskLayout {
         this._placements = this._readPlacements();
         this._folders = this._readFolders();
         this._names = this._readNames();
+        this._icons = this._readIcons();
     }
 
     /**
@@ -465,6 +468,8 @@ export class DeskLayout {
         delete this._placements[id];
         const hadName = this._names[id] !== undefined;
         delete this._names[id];
+        const hadIcon = this._icons[id] !== undefined;
+        delete this._icons[id];
 
         // Tirar uma pasta virtual da área de trabalho apaga o REGISTRO dela:
         // ela não existe em lugar nenhum além daqui (os apps continuam
@@ -483,6 +488,8 @@ export class DeskLayout {
             this._writeFolders();
         if (hadName)
             this._writeNames();
+        if (hadIcon)
+            this._writeIcons();
         return true;
     }
 
@@ -725,6 +732,20 @@ export class DeskLayout {
         return true;
     }
 
+    /** Define a imagem usada pelo ArcDesk e pelo ArcDock para este atalho. */
+    setItemIcon(id, path) {
+        const parsed = parseDeskId(id);
+        if (!this._items.includes(id) ||
+            (parsed?.type !== DeskItemType.APP && parsed?.type !== DeskItemType.PATH))
+            return false;
+        const value = typeof path === 'string' ? path.trim() : '';
+        if (!value || value === this._icons[id])
+            return false;
+        this._icons[id] = value;
+        this._writeIcons();
+        return true;
+    }
+
     /**
      * Primeiro slot livre do monitor `mon`, varrendo em COLUNA-MAJOR a partir
      * da origem (coluna 0, linhas 0..rows-1; depois coluna 1; ...).
@@ -812,6 +833,7 @@ export class DeskLayout {
             appId,
             app,
             name: this._names[id] ?? app.get_name() ?? '',
+            customIcon: this._icons[id] ?? null,
         };
     }
 
@@ -823,6 +845,7 @@ export class DeskLayout {
             // Basename é aritmética de string em GLib, não I/O — nada aqui
             // toca o disco. O fallback para o caminho inteiro cobre '/'.
             name: this._names[id] ?? (GLib.path_get_basename(path) || path),
+            customIcon: this._icons[id] ?? null,
         };
     }
 
@@ -1049,6 +1072,20 @@ export class DeskLayout {
         return names;
     }
 
+    _readIcons() {
+        const parsed = this._readJson(KEY_ICONS);
+        if (!parsed)
+            return {};
+        const icons = {};
+        for (const [id, path] of Object.entries(parsed)) {
+            const item = parseDeskId(id);
+            if ((item?.type === DeskItemType.APP || item?.type === DeskItemType.PATH) &&
+                typeof path === 'string' && path.trim())
+                icons[id] = path.trim();
+        }
+        return icons;
+    }
+
     _readJson(key) {
         if (!this._settings)
             return null;
@@ -1099,6 +1136,14 @@ export class DeskLayout {
         this._settings.set_string(KEY_NAMES, json);
     }
 
+    _writeIcons() {
+        if (!this._settings)
+            return;
+        const json = _serializeNames(this._icons);
+        this._pendingSelfWrite[KEY_ICONS] = json;
+        this._settings.set_string(KEY_ICONS, json);
+    }
+
     _ensureWatch() {
         if (this._watching || !this._settings)
             return;
@@ -1108,7 +1153,7 @@ export class DeskLayout {
         // mudança externa depois da assinatura.
         for (const key of Object.keys(this._pendingSelfWrite))
             this._pendingSelfWrite[key] = null;
-        for (const key of [KEY_ITEMS, KEY_PLACEMENTS, KEY_FOLDERS, KEY_NAMES]) {
+        for (const key of [KEY_ITEMS, KEY_PLACEMENTS, KEY_FOLDERS, KEY_NAMES, KEY_ICONS]) {
             this._signals.connect(this._settings, `changed::${key}`,
                 () => this._onKeyChanged(key));
         }

@@ -1576,8 +1576,10 @@
     border-color: rgba(255, 255, 255, 0.62);
 }
 
-.arcdesk-widget-host.arcdesk-widget-editing {
-    border: 4px solid white;
+/* Os cartões de consumo têm cantos de 30px; a borda de hover deve seguir
+ * o mesmo contorno do conteúdo, sem alterar os widgets de 24px. */
+.arcdesk-widget-host-usage {
+    border-radius: 30px;
 }
 
 .arcdesk-image-widget-content,
@@ -1619,6 +1621,57 @@
 .arcdesk-calendar-widget StLabel {
     text-shadow: none;
 }
+
+.arcdesk-codex-widget {
+    padding: 17px 20px;
+    color: white;
+    background-color: rgba(35, 35, 35, 0.90);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 30px;
+    box-shadow: none;
+}
+
+.arcdesk-codex-body { spacing: 7px; }
+.arcdesk-codex-top { spacing: 12px; }
+.arcdesk-codex-copy { spacing: 1px; }
+.arcdesk-codex-title { color: rgba(255, 255, 255, 0.82); font-size: 16px; font-weight: 600; }
+.arcdesk-codex-value { color: white; font-size: 36px; font-weight: 700; }
+.arcdesk-codex-limit { color: rgba(255, 255, 255, 0.70); font-size: 12px; font-weight: 600; }
+.arcdesk-codex-weekly { padding-top: 2px; }
+.arcdesk-codex-progress-track { height: 8px; background-color: rgba(255, 255, 255, 0.28); border-radius: 5px; }
+.arcdesk-codex-progress-fill { height: 8px; background-color: white; border-radius: 5px; }
+.arcdesk-codex-icon { color: white; }
+
+.arcdesk-codex-widget,
+.arcdesk-codex-widget StLabel {
+    text-shadow: none;
+}
+
+.arcdesk-claude-widget {
+    padding: 17px 20px;
+    color: #777773;
+    background-color: rgba(245, 243, 239, 0.90);
+    border: 1px solid rgba(50, 45, 40, 0.06);
+    border-radius: 30px;
+    box-shadow: none;
+}
+
+.arcdesk-claude-body { spacing: 7px; }
+.arcdesk-claude-top { spacing: 12px; }
+.arcdesk-claude-copy { spacing: 1px; }
+.arcdesk-claude-title { color: #777773; font-size: 16px; font-weight: 600; }
+.arcdesk-claude-value { color: #d98d6f; font-size: 36px; font-weight: 700; }
+.arcdesk-claude-limit { color: #777773; font-size: 12px; font-weight: 600; }
+.arcdesk-claude-weekly { padding-top: 2px; }
+.arcdesk-claude-progress-track { height: 8px; background-color: #ebe5db; border-radius: 5px; }
+.arcdesk-claude-progress-fill { height: 8px; background-color: #5ba46f; border-radius: 5px; }
+.arcdesk-claude-icon { color: #d98d6f; }
+
+.arcdesk-claude-widget,
+.arcdesk-claude-widget StLabel {
+    text-shadow: none;
+}
+
 .arcdesk-rename-box {
     spacing: 12px;
     min-width: 320px;

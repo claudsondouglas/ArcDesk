@@ -94,6 +94,12 @@
       <description>JSON object mapping app and path item ids to user-defined display names. Renaming changes only the ArcDesk label and never the underlying application or directory.</description>
     </key>
 
+    <key name="desk-item-icons" type="s">
+      <default>'{}'</default>
+      <summary>Custom desktop item icons</summary>
+      <description>JSON object mapping app and path item ids to user-selected image paths. This is a public appearance contract shared with ArcDock: both surfaces render the same custom icon without changing the underlying application or directory.</description>
+    </key>
+
     <key name="desk-widgets" type="s">
       <default>'{}'</default>
       <summary>Desktop widgets</summary>

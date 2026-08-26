@@ -40,7 +40,7 @@ export class DeskIconMenu {
      * @param {Clutter.Actor} params.sourceActor célula a que o menu se ancora
      * @param {object} params.item entry de `DeskLayout.build()`
      * @param {object} params.policy callbacks da superfície:
-     *   - `open(item)` / `openFolder(item)` / `rename(item)` / `remove(item)`
+     *   - `open(item)` / `openFolder(item)` / `rename(item)` / `changeIcon(item)` / `remove(item)`
      *   - `isPinnedToDock(app)` e `togglePinnedToDock(app)` — OPCIONAIS, e
      *     opcionais JUNTOS: sem os dois o item de fixar não é criado, porque
      *     um menu que lê o estado mas não escreve (ou o contrário) carrega
@@ -144,6 +144,8 @@ export class DeskIconMenu {
         if (type === ItemType.APP || type === ItemType.PATH) {
             this._addItem('Renomear',
                 () => this._policy.rename?.(this._item), 'rename shortcut');
+            this._addItem('Mudar ícone',
+                () => this._policy.changeIcon?.(this._item), 'change shortcut icon');
         }
 
         if (type === ItemType.APP) {

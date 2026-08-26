@@ -22,8 +22,9 @@ function _validate(raw) {
     if (typeof raw.type !== 'string' || !raw.type) return null;
     const config = raw.config && typeof raw.config === 'object' &&
         !Array.isArray(raw.config) ? {...raw.config} : {};
-    // O calendario tem layout compacto e fixo de 2 colunas por 2 linhas.
+    // Calendário e medidores de IA têm pegadas compactas e fixas na grade.
     const isCalendar = raw.type === 'calendar';
+    const isAiUsage = raw.type === 'codex' || raw.type === 'claude';
     if (isCalendar) config.layoutVersion = 7;
     return {
         ...raw,
@@ -42,9 +43,9 @@ function _validate(raw) {
             WIDGET_GEOMETRY.MIN_SIZE, WIDGET_GEOMETRY.MAX_SIZE),
         col: Number.isFinite(raw.col) ? _number(raw.col, 0, 0, 32768) : null,
         row: Number.isFinite(raw.row) ? _number(raw.row, 0, 0, 32768) : null,
-        colSpan: isCalendar ? 2 : _number(raw.colSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
+        colSpan: isCalendar ? 2 : isAiUsage ? 3 : _number(raw.colSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
             1, WIDGET_GEOMETRY.MAX_SPAN),
-        rowSpan: isCalendar ? 2 : _number(raw.rowSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
+        rowSpan: isCalendar ? 2 : isAiUsage ? 2 : _number(raw.rowSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
             1, WIDGET_GEOMETRY.MAX_SPAN),
         locked: raw.locked === true,
         config,
