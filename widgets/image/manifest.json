@@ -3,15 +3,34 @@
   "name": "Imagem",
   "version": 1,
   "entry": "imageWidget.js",
-  "defaultGridSize": { "columns": 4, "rows": 4 },
-  "minGridSize": { "columns": 1, "rows": 1 },
+  "defaultGridSize": {
+    "columns": 4,
+    "rows": 4
+  },
+  "minGridSize": {
+    "columns": 1,
+    "rows": 1
+  },
+  "minSize": {
+    "width": 80,
+    "height": 80
+  },
   "resizable": true,
   "settings": {
-    "imagePath": { "type": "file", "label": "Imagem", "required": true },
+    "imagePath": {
+      "type": "file",
+      "label": "Imagem",
+      "required": true,
+      "mimeTypes": [
+        "image/*"
+      ]
+    },
     "fit": {
       "type": "choice",
       "default": "cover",
-      "choices": ["cover"]
+      "choices": [
+        "cover"
+      ]
     }
   }
 }

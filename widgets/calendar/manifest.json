@@ -5,6 +5,8 @@
   "entry": "calendarWidget.js",
   "defaultGridSize": { "columns": 2, "rows": 2 },
   "minGridSize": { "columns": 2, "rows": 2 },
+  "minSize": { "width": 120, "height": 120 },
   "resizable": false,
+  "defaultConfig": { "layoutVersion": 7 },
   "settings": {}
 }

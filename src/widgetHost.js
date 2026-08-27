@@ -40,7 +40,7 @@ export class WidgetHost {
         this._scale = Math.max(1, params.scale ?? 1);
         this._onGeometry = params.onGeometry ?? null;
         this._onRemove = params.onRemove ?? null;
-        this._onChangeImage = params.onChangeImage ?? null;
+        this._onChooseFile = params.onChooseFile ?? null;
         this._beforeOpenMenu = params.beforeOpenMenu ?? null;
         this._onMenuStateChanged = params.onMenuStateChanged ?? null;
         this._signals = new SignalTracker();
@@ -50,10 +50,15 @@ export class WidgetHost {
 
         const definition = widgetDefinition(this._record?.type);
         if (!definition) throw new Error(`Unknown widget type: ${this._record?.type}`);
+        this._definition = definition;
         this._content = definition.create({config: this._record.config});
-        const usageWidget = this._record.type === 'codex' || this._record.type === 'claude';
+        // A classe extra vem do manifest do pacote. O host NÃO conhece — nem
+        // pode conhecer — o nome de nenhum widget: era exatamente esse teste
+        // por `type` que obrigava a editar o ArcDesk para criar um.
         this._actor = new St.Widget({
-            style_class: `arcdesk-widget-host${usageWidget ? ' arcdesk-widget-host-usage' : ''}`,
+            style_class: definition.styleClass
+                ? `arcdesk-widget-host ${definition.styleClass}`
+                : 'arcdesk-widget-host',
             reactive: true,
             track_hover: true,
             clip_to_allocation: true,
@@ -61,6 +66,11 @@ export class WidgetHost {
         });
         this._actor.add_child(this._content.actor);
         this._resizable = definition.resizable !== false;
+        // Piso do redimensionamento, em px LÓGICOS: quem declara é o pacote,
+        // que é o único que sabe a partir de que tamanho o seu desenho para
+        // de fazer sentido.
+        this._minWidth = definition.minWidth;
+        this._minHeight = definition.minHeight;
         this._applyGeometry(this._record);
 
         this._signals.connect(this._actor, 'button-press-event', (_actor, event) => {
@@ -93,8 +103,7 @@ export class WidgetHost {
         if (!this._menu) {
             this._menu = new WidgetMenu({
                 sourceActor: this._actor,
-                widgetType: this._record?.type,
-                onChangeImage: () => this._onChangeImage?.(),
+                configItems: this._configItems(),
                 onRemove: () => this._onRemove?.(),
                 onStateChanged: (isOpen) => this._onMenuStateChanged?.(this, isOpen),
             });
@@ -104,6 +113,20 @@ export class WidgetHost {
 
     closeMenu() {
         this._menu?.close();
+    }
+
+    /**
+     * Itens de configuração do menu, derivados dos ajustes `file` do
+     * manifest. Um pacote que declara `{"type": "file", "label": "Imagem"}`
+     * ganha "Mudar imagem…" sem que nada aqui saiba o que é uma imagem.
+     *
+     * @returns {{label: string, action: function}[]}
+     */
+    _configItems() {
+        return (this._definition?.fileSettings ?? []).map(({key, label}) => ({
+            label: `Mudar ${label.toLowerCase()}…`,
+            action: () => this._onChooseFile?.(key, label),
+        }));
     }
 
     update(record, scale = this._scale) {
@@ -184,16 +207,17 @@ export class WidgetHost {
                 this._gesture.x + dx,
                 this._gesture.y + dy);
         } else {
-            const min = 80 * this._scale;
+            const minWidth = this._minWidth * this._scale;
+            const minHeight = this._minHeight * this._scale;
             const edges = this._gesture.edges;
             let left = this._gesture.x;
             let top = this._gesture.y;
             let right = left + this._gesture.width;
             let bottom = top + this._gesture.height;
-            if (edges.left) left = Math.min(right - min, left + dx);
-            if (edges.right) right = Math.max(left + min, right + dx);
-            if (edges.top) top = Math.min(bottom - min, top + dy);
-            if (edges.bottom) bottom = Math.max(top + min, bottom + dy);
+            if (edges.left) left = Math.min(right - minWidth, left + dx);
+            if (edges.right) right = Math.max(left + minWidth, right + dx);
+            if (edges.top) top = Math.min(bottom - minHeight, top + dy);
+            if (edges.bottom) bottom = Math.max(top + minHeight, bottom + dy);
             const geometry = {
                 x: left / this._scale,
                 y: top / this._scale,
@@ -266,7 +290,8 @@ export class WidgetHost {
         this._actor = null;
         this._onGeometry = null;
         this._onRemove = null;
-        this._onChangeImage = null;
+        this._onChooseFile = null;
+        this._definition = null;
         this._beforeOpenMenu = null;
         this._onMenuStateChanged = null;
     }

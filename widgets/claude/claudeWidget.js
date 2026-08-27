@@ -452,3 +452,8 @@ export class ClaudeWidget {
         this._state = null;
     }
 }
+
+/** Fábrica exigida pelo loader de widgets (`src/widgetRegistry.js`). */
+export function create(params = {}) {
+    return new ClaudeWidget(params);
+}

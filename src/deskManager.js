@@ -12,6 +12,7 @@ import { FolderPopup } from './folderPopup.js';
 import { FullscreenWatcher } from './fullscreenWatcher.js';
 import { SignalTracker } from './trackers.js';
 import { WidgetStore } from './widgetStore.js';
+import { loadWidgets, widgetConstraints } from './widgetRegistry.js';
 
 /** UUID da própria extensão, usado só para abrir as preferências. */
 const UUID = 'ArcDesk@claudson';
@@ -102,7 +103,15 @@ export class DeskManager {
 
         this._signals = new SignalTracker();
         this._layout = new DeskLayout(this._settings);
-        this._widgetStore = new WidgetStore(this._settings);
+        this._destroyed = false;
+        // As restrições vêm do CATÁLOGO VIVO, não de uma cópia: o store é
+        // construído agora e `loadWidgets()` só resolve daqui a alguns
+        // frames. Até lá `widgetConstraints` responde null para tudo, o que
+        // faz o store apenas normalizar números e preservar cada registro
+        // exatamente como está.
+        this._widgetStore = new WidgetStore(this._settings, {
+            constraints: widgetConstraints,
+        });
         this._unsubscribeWidgets = this._widgetStore.onExternalChange(() =>
             this._safe(() => this.refreshWidgets(), 'external widget change'));
         this._unsubscribe = null;
@@ -128,6 +137,26 @@ export class DeskManager {
         this._fullscreen = null;
 
         this._createSurfaces();
+
+        // O catálogo de widgets é lido do disco de forma assíncrona: varrer
+        // os manifests é I/O — que dentro da shell nunca é síncrono — e o
+        // `import()` de um módulo ESM devolve uma Promise por definição da
+        // linguagem. Enquanto não resolve, as grades são montadas normalmente
+        // e nenhum widget é desenhado; os registros ficam intactos.
+        //
+        // Quando resolve, o store revalida COM as restrições dos manifests
+        // (é aí que uma pegada fixa volta a ser fixa) e todas as telas
+        // reconciliam de uma vez — pela mesma razão de sempre: N superfícies
+        // reagindo por conta própria seriam N reconstruções por evento.
+        loadWidgets()
+            .then(() => {
+                if (this._destroyed) return;
+                this._safe(() => {
+                    this._widgetStore?.reload();
+                    this.refreshWidgets();
+                }, 'widget catalogue ready');
+            })
+            .catch(e => logError(e, '[ArcDesk] widget catalogue failed to load'));
 
         // A contagem de monitores pode mudar, então não basta um relayout:
         // o conjunto inteiro é destruído e reconstruído a partir do array
@@ -210,6 +239,11 @@ export class DeskManager {
     }
 
     destroy() {
+        // A Promise de `loadWidgets()` pode estar em voo. Ela não é
+        // cancelável de forma útil (o `import()` já foi emitido), então o que
+        // se cancela é o EFEITO dela — a continuação checa esta bandeira
+        // antes de tocar em store ou superfície.
+        this._destroyed = true;
         // PRIMEIRA linha, antes de qualquer coisa que possa lançar: um grab
         // que sobrevive ao destroy deixa a sessão sem teclado e sem
         // ponteiro, e não há recuperação sem um TTY.
@@ -230,6 +264,10 @@ export class DeskManager {
         this._layout = null;
         this._safe(() => this._widgetStore?.destroy(), 'widget store destroy');
         this._widgetStore = null;
+        // O catálogo de widgets NÃO é esvaziado aqui, de propósito: toda
+        // mudança de aparência destrói e reconstrói este gerente, e recarregar
+        // faria os widgets piscarem a cada arrastada de slider. Ele também não
+        // segura nada que o cache de módulos do GJS já não segurasse.
         this._apps = [];
         this._settings = null;
         // De novo, e de propósito: qualquer passo acima poderia, em teoria,

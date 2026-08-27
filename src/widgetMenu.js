@@ -17,13 +17,20 @@ export class WidgetMenu {
         this._manager.addMenu(this._menu);
         Main.layoutManager.uiGroup.add_child(this._menu.actor);
 
-        if (params.widgetType === 'image' && params.onChangeImage) {
-            const changeItem = new PopupMenu.PopupMenuItem('Mudar imagem…');
-            changeItem.connect('activate', () =>
-                this._guard(() => params.onChangeImage()));
-            this._menu.addMenuItem(changeItem);
-            this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        // Os itens de configuração são declarados pelo manifest do pacote e
+        // chegam prontos: o menu não sabe o que é uma imagem, nem qualquer
+        // outro tipo de widget.
+        const configItems = Array.isArray(params.configItems)
+            ? params.configItems : [];
+        for (const item of configItems) {
+            if (typeof item?.label !== 'string' ||
+                typeof item?.action !== 'function') continue;
+            const menuItem = new PopupMenu.PopupMenuItem(item.label);
+            menuItem.connect('activate', () => this._guard(() => item.action()));
+            this._menu.addMenuItem(menuItem);
         }
+        if (configItems.length)
+            this._menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         const removeItem = new PopupMenu.PopupMenuItem('Remover widget');
         removeItem.connect('activate', () => this._guard(() => this._onRemove?.()));

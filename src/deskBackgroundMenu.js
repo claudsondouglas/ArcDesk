@@ -65,8 +65,9 @@ export class DeskBackgroundMenu {
      *   extensão (semântica de `Extension.openPreferences()`).
      * @param {() => void} params.onArrangeIcons compacta os ícones DESTE
      *   monitor nas primeiras casas livres.
-     * @param {{type: string, name: string}[]} [params.widgets] tipos de
-     *   widget que podem ser adicionados.
+     * @param {(() => {type: string, name: string}[])|{type: string,
+     *   name: string}[]} [params.widgets] tipos de widget que podem ser
+     *   adicionados, ou uma função que os devolve na hora de montar o menu.
      * @param {(type: string) => void} [params.onAddWidget]
      * @param {(isOpen: boolean) => void} [params.onStateChanged]
      */
@@ -75,7 +76,12 @@ export class DeskBackgroundMenu {
         this._policy = {
             onOpenPrefs: params.onOpenPrefs ?? null,
             onArrangeIcons: params.onArrangeIcons ?? null,
-            widgets: Array.isArray(params.widgets) ? params.widgets : [],
+            // Aceita um array OU uma função. A função é o caminho vivo: o
+            // catálogo de widgets é carregado de forma assíncrona e pode
+            // estar vazio no instante em que esta classe é construída.
+            widgets: typeof params.widgets === 'function'
+                ? params.widgets
+                : () => (Array.isArray(params.widgets) ? params.widgets : []),
             onAddWidget: params.onAddWidget ?? null,
             onStateChanged: params.onStateChanged ?? null,
         };
@@ -194,7 +200,12 @@ export class DeskBackgroundMenu {
     }
 
     _addWidgetsSubmenu() {
-        const widgets = this._policy.widgets ?? [];
+        let widgets = [];
+        try {
+            widgets = this._policy.widgets?.() ?? [];
+        } catch (e) {
+            logError(e, '[ArcDesk] widget catalogue read failed');
+        }
         if (!widgets.length) return;
 
         const submenu = new PopupMenu.PopupSubMenuMenuItem('Adicionar widget');

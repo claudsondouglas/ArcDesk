@@ -17,15 +17,62 @@ function _number(value, fallback, min, max) {
     return Math.max(min, Math.min(max, Math.round(value)));
 }
 
-function _validate(raw) {
+/**
+ * Persistência das instâncias de widget.
+ *
+ * ---------------------------------------------------------------------
+ * O STORE NÃO CONHECE NENHUM TIPO DE WIDGET
+ * ---------------------------------------------------------------------
+ *
+ * Ele recebe um `constraints(type)` e é só isso que sabe: quantas células
+ * um tipo ocupa por padrão, qual o mínimo, se pode ser redimensionado e com
+ * que config uma instância nova nasce. Quem responde isso é o manifest do
+ * pacote — pela `widgetConstraints` do registry dentro da shell, e pela
+ * `constraintsFrom(loadManifestsSync())` no processo de preferências.
+ *
+ * Antes desta separação o store testava `type === 'calendar'` e
+ * `type === 'codex' || 'claude'` para fixar spans, o que significava editar
+ * a persistência para criar um widget. Não é mais assim, e não deve voltar
+ * a ser: um tipo escrito aqui é um pacote que deixou de ser um pacote.
+ *
+ * ---------------------------------------------------------------------
+ * UM TIPO DESCONHECIDO É PRESERVADO, NUNCA APAGADO
+ * ---------------------------------------------------------------------
+ *
+ * `constraints()` devolve null quando o pacote não está instalado — porque
+ * ainda não carregou, porque o usuário removeu o diretório, ou porque o
+ * registro veio de uma versão mais nova. Nos três casos o registro é mantido
+ * exatamente como está e apenas não é desenhado. É a mesma regra que já vale
+ * para um id desconhecido em `desk-items`: um laço que "limpa o que não
+ * reconhece" é como uma versão antiga apaga o trabalho de uma versão nova.
+ */
+function _validate(raw, constraints) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     if (typeof raw.type !== 'string' || !raw.type) return null;
-    const config = raw.config && typeof raw.config === 'object' &&
+
+    const limits = constraints?.(raw.type) ?? null;
+    const stored = raw.config && typeof raw.config === 'object' &&
         !Array.isArray(raw.config) ? {...raw.config} : {};
-    // Calendário e medidores de IA têm pegadas compactas e fixas na grade.
-    const isCalendar = raw.type === 'calendar';
-    const isAiUsage = raw.type === 'codex' || raw.type === 'claude';
-    if (isCalendar) config.layoutVersion = 7;
+    // Os defaults do manifest entram POR BAIXO do que o usuário gravou.
+    const config = {...(limits?.defaultConfig ?? {}), ...stored};
+
+    let colSpan;
+    let rowSpan;
+    if (limits && limits.resizable === false) {
+        // A pegada de um widget não redimensionável é a do manifest, ponto —
+        // é isso que faz o calendário 2x2 e os medidores 3x2 continuarem
+        // 2x2 e 3x2 sem que este arquivo saiba os nomes deles.
+        colSpan = limits.defaultColSpan;
+        rowSpan = limits.defaultRowSpan;
+    } else {
+        colSpan = _number(raw.colSpan,
+            limits?.defaultColSpan ?? WIDGET_GEOMETRY.DEFAULT_SPAN,
+            limits?.minColSpan ?? 1, WIDGET_GEOMETRY.MAX_SPAN);
+        rowSpan = _number(raw.rowSpan,
+            limits?.defaultRowSpan ?? WIDGET_GEOMETRY.DEFAULT_SPAN,
+            limits?.minRowSpan ?? 1, WIDGET_GEOMETRY.MAX_SPAN);
+    }
+
     return {
         ...raw,
         type: raw.type,
@@ -43,18 +90,25 @@ function _validate(raw) {
             WIDGET_GEOMETRY.MIN_SIZE, WIDGET_GEOMETRY.MAX_SIZE),
         col: Number.isFinite(raw.col) ? _number(raw.col, 0, 0, 32768) : null,
         row: Number.isFinite(raw.row) ? _number(raw.row, 0, 0, 32768) : null,
-        colSpan: isCalendar ? 2 : isAiUsage ? 3 : _number(raw.colSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
-            1, WIDGET_GEOMETRY.MAX_SPAN),
-        rowSpan: isCalendar ? 2 : isAiUsage ? 2 : _number(raw.rowSpan, WIDGET_GEOMETRY.DEFAULT_SPAN,
-            1, WIDGET_GEOMETRY.MAX_SPAN),
+        colSpan,
+        rowSpan,
         locked: raw.locked === true,
         config,
     };
 }
 
 export class WidgetStore {
-    constructor(settings) {
+    /**
+     * @param {Gio.Settings} settings
+     * @param {object} [params]
+     * @param {(type: string) => object|null} [params.constraints] limites
+     *   declarados pelo manifest do tipo. Sem ele o store apenas normaliza
+     *   números e nunca fixa uma pegada.
+     */
+    constructor(settings, params = {}) {
         this._settings = settings ?? null;
+        this._constraints = typeof params.constraints === 'function'
+            ? params.constraints : () => null;
         this._signals = new SignalTracker();
         this._watchers = new Set();
         this._pendingWrite = null;
@@ -81,7 +135,7 @@ export class WidgetStore {
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) parsed = {};
         const records = {};
         for (const [id, raw] of Object.entries(parsed)) {
-            const record = _validate(raw);
+            const record = _validate(raw, this._constraints);
             if (record) records[id] = record;
         }
         this._records = records;
@@ -95,32 +149,38 @@ export class WidgetStore {
         }));
     }
 
-    addImage(imagePath) {
-        if (typeof imagePath !== 'string' || !imagePath) return null;
-        const id = GLib.uuid_string_random();
-        this._records[id] = {
-            type: 'image', monitor: null, x: 40, y: 40,
-            width: 240, height: 240,
-            col: 0, row: 0, colSpan: 4, rowSpan: 4, locked: false,
-            config: {imagePath, fit: 'cover'},
-        };
-        this._write();
-        return id;
-    }
-
+    /**
+     * Cria uma instância. A pegada e a config inicial vêm do manifest; quem
+     * chama só sobrepõe o que realmente escolheu.
+     *
+     * @param {string} type
+     * @param {object} [options]
+     * @param {number} [options.monitor]
+     * @param {number} [options.colSpan]
+     * @param {number} [options.rowSpan]
+     * @param {object} [options.config]
+     * @returns {string|null} o id da instância
+     */
     add(type, options = {}) {
         if (typeof type !== 'string' || !type) return null;
+        const limits = this._constraints(type);
         const id = GLib.uuid_string_random();
-        this._records[id] = {
+        const record = _validate({
             type,
             monitor: Number.isInteger(options.monitor) ? options.monitor : null,
-            x: 40, y: 40, width: 160, height: 160,
+            x: 40, y: 40,
+            width: WIDGET_GEOMETRY.DEFAULT_SIZE,
+            height: WIDGET_GEOMETRY.DEFAULT_SIZE,
             col: 0, row: 0,
-            colSpan: options.colSpan ?? WIDGET_GEOMETRY.DEFAULT_SPAN,
-            rowSpan: options.rowSpan ?? WIDGET_GEOMETRY.DEFAULT_SPAN,
+            colSpan: options.colSpan ?? limits?.defaultColSpan ??
+                WIDGET_GEOMETRY.DEFAULT_SPAN,
+            rowSpan: options.rowSpan ?? limits?.defaultRowSpan ??
+                WIDGET_GEOMETRY.DEFAULT_SPAN,
             locked: false,
-            config: type === 'calendar' ? {layoutVersion: 7} : {},
-        };
+            config: {...(options.config ?? {})},
+        }, this._constraints);
+        if (!record) return null;
+        this._records[id] = record;
         this._write();
         return id;
     }
@@ -135,7 +195,7 @@ export class WidgetStore {
         for (const {id, geometry} of updates ?? []) {
             const current = this._records[id];
             if (!current) continue;
-            const next = _validate({...current, ...geometry});
+            const next = _validate({...current, ...geometry}, this._constraints);
             if (!next || JSON.stringify(current) === JSON.stringify(next)) continue;
             this._records[id] = next;
             changed = true;
@@ -147,7 +207,9 @@ export class WidgetStore {
     updateConfig(id, config) {
         const current = this._records[id];
         if (!current || !config || typeof config !== 'object') return false;
-        const next = _validate({...current, config: {...current.config, ...config}});
+        const next = _validate(
+            {...current, config: {...current.config, ...config}},
+            this._constraints);
         if (!next) return false;
         if (JSON.stringify(current) === JSON.stringify(next)) return false;
         this._records[id] = next;

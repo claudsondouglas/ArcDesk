@@ -16,7 +16,7 @@ import { GhostFlight } from './ghostFlight.js';
 import { RenameDialog } from './renameDialog.js';
 import { SignalTracker } from './trackers.js';
 import { WidgetHost } from './widgetHost.js';
-import { availableWidgets } from './widgetRegistry.js';
+import { availableWidgets, widgetDefinition } from './widgetRegistry.js';
 
 /**
  * Marca posta no actor da superfície.
@@ -181,6 +181,9 @@ export class DeskSurface {
         this._icons = new Map();
         this._slots = [];
         this._widgets = new Map();
+        // Tipos sem pacote instalado, avisados UMA vez cada: `refreshWidgets`
+        // roda a cada gesto e um aviso por reconciliação inundaria o journal.
+        this._missingWidgetTypes = new Set();
         this._metrics = null;
         this._built = false;
         // Lido já no construtor, e não só no _build(): o gerente pergunta o
@@ -1040,6 +1043,18 @@ export class DeskSurface {
         const records = this._resolveWidgetCollisions(ownRecords);
         const seen = new Set();
         for (const record of records) {
+            // Sem pacote instalado o registro NÃO é desenhado e NÃO é
+            // apagado: ele continua reservando a sua pegada e volta sozinho
+            // assim que o pacote existir. Também é o estado normal nos
+            // primeiros frames, enquanto `loadWidgets()` não resolveu.
+            if (!widgetDefinition(record.type)) {
+                if (!this._missingWidgetTypes.has(record.type)) {
+                    this._missingWidgetTypes.add(record.type);
+                    console.warn(
+                        `[ArcDesk] no widget package for "${record.type}"`);
+                }
+                continue;
+            }
             seen.add(record.id);
             const displayRecord = this._widgetDisplayRecord(record);
             const existing = this._widgets.get(record.id);
@@ -1095,7 +1110,8 @@ export class DeskSurface {
                             return GLib.SOURCE_REMOVE;
                         });
                     },
-                    onChangeImage: () => this._chooseWidgetImage(record.id),
+                    onChooseFile: (key, label) =>
+                        this._chooseWidgetFile(record.id, key, label),
                     beforeOpenMenu: (widget) => this._beforeWidgetMenu(widget),
                     onMenuStateChanged: (widget, isOpen) => {
                         if (isOpen) this._menuWidget = widget;
@@ -1386,7 +1402,15 @@ export class DeskSurface {
         }
     }
 
-    _chooseWidgetImage(id) {
+    /**
+     * Portal de arquivo para um ajuste `file` declarado no manifest.
+     *
+     * @param {string} id instância
+     * @param {string} key chave do ajuste, gravada em `config`
+     * @param {string} label rótulo do manifest, usado no título do portal
+     */
+    _chooseWidgetFile(id, key, label) {
+        if (!id || typeof key !== 'string' || !key) return;
         const bus = Gio.DBus.session;
         bus.call(
             'org.freedesktop.portal.Desktop',
@@ -1395,7 +1419,7 @@ export class DeskSurface {
             'OpenFile',
             new GLib.Variant('(ssa{sv})', [
                 '',
-                'Escolher uma imagem',
+                `Escolher ${String(label ?? 'arquivo').toLowerCase()}`,
                 {
                     multiple: new GLib.Variant('b', false),
                     directory: new GLib.Variant('b', false),
@@ -1410,7 +1434,7 @@ export class DeskSurface {
                 try {
                     [requestPath] = bus.call_finish(result).deepUnpack();
                 } catch (e) {
-                    logError(e, '[ArcDesk] image chooser failed');
+                    logError(e, '[ArcDesk] file chooser failed');
                     return;
                 }
                 let subscription = 0;
@@ -1428,7 +1452,7 @@ export class DeskSurface {
                         const uri = results.uris?.[0];
                         const path = uri ? Gio.File.new_for_uri(uri).get_path() : null;
                         if (!path || !this._widgetStore?.updateConfig(id, {
-                            imagePath: path,
+                            [key]: path,
                         })) return;
                         this.refreshWidgets();
                     }
@@ -1444,6 +1468,7 @@ export class DeskSurface {
             }
         }
         this._widgets.clear();
+        this._missingWidgetTypes.clear();
         this._menuWidget = null;
     }
 
@@ -1893,18 +1918,20 @@ export class DeskSurface {
             this._bgMenu = new DeskBackgroundMenu({
                 sourceActor: this._actor,
                 onOpenPrefs: () => this._onOpenPrefs?.(),
-                widgets: availableWidgets(),
+                // Uma FUNÇÃO, não o array: o menu é montado no primeiro
+                // botão direito, que pode acontecer antes de `loadWidgets()`
+                // resolver. Resolvido na montagem, o submenu reflete o
+                // catálogo que existe naquele instante.
+                widgets: () => availableWidgets(),
                 onAddWidget: (type) => {
-                    const definition = availableWidgets().find(
-                        widget => widget.type === type);
-                    if (definition?.configurable) {
+                    const definition = widgetDefinition(type);
+                    if (!definition) return;
+                    if (definition.configurable) {
                         this._onOpenPrefs?.();
                         return;
                     }
                     this._widgetStore?.add(type, {
                         monitor: this._monitorIndex,
-                        colSpan: definition.defaultColSpan,
-                        rowSpan: definition.defaultRowSpan,
                     });
                     this.refreshWidgets();
                 },

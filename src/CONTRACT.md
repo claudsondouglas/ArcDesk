@@ -903,3 +903,140 @@ about surfaces, popups or monitors.
 ## `prefs.js` — one addition
 
 The Items page shows which monitor each item is on, read from `desk-placements`. Display-only.
+
+---
+
+# AMENDMENT 2 — widgets are PACKAGES, not code inside ArcDesk
+
+Supersedes nothing above it; the widget subsystem was never in the body of this document. It is
+binding from here on.
+
+A widget is a **directory with a `manifest.json` and one ES module**. ArcDesk knows where it goes,
+how many cells it may occupy, which monitor it is on and how big it may be. It does not know what
+any of them draw, and no file under `src/` may name a widget type.
+
+```
+<extensão>/widgets/<id>/manifest.json + <entry>.js     ← os que vêm na caixa
+~/.local/share/arcdesk/widgets/<id>/…                  ← os do usuário, e vencem o empate
+```
+
+## The manifest is the source of truth, and the module is only the drawing
+
+Because `prefs.js` runs in **another process**. A registry that lives in the shell is invisible to
+it, and the Widgets page has to know which types exist, what they are called, how big they start and
+which of them need a file. Everything ArcDesk needs in order to *place* a widget is therefore in
+JSON; the `.js` is imported only when the widget is actually going to be painted.
+
+| field | meaning |
+|---|---|
+| `id` | must match `^[a-z0-9][a-z0-9_-]*$` **and equal the directory name** |
+| `name` | display name, pt-BR |
+| `entry` | a bare filename ending in `.js`, resolved inside the package |
+| `defaultGridSize` | `{columns, rows}` — the footprint a new instance gets |
+| `minGridSize` | floor for a resizable widget; clamped to never exceed `defaultGridSize` |
+| `minSize` | `{width, height}` in logical px — the floor of the resize gesture |
+| `resizable` | `false` **pins** the footprint to `defaultGridSize` forever |
+| `styleClass` | extra CSS class on the host actor |
+| `defaultConfig` | merged **under** the stored config, never over it |
+| `settings` | per-key schema; `type: "file"` becomes a "Mudar …" menu item and a prefs row |
+| `configurable` | derived from any `required: true` setting; such a type opens prefs instead of being created straight from the background menu |
+
+- **The directory is the identity.** A manifest whose `id` differs from its directory is rejected —
+  otherwise two packages could claim one id and the winner would depend on the order the filesystem
+  happened to return.
+- **`entry` never escapes the package.** No `/`, no `\`, no leading `.`. A manifest is a *data*
+  file, and a data file does not get to choose which module of the system the shell imports.
+- **The user directory overrides the bundled one**, with a `console.warn`. That is how a widget is
+  developed without editing the installed extension — and a forgotten override explains, by itself,
+  a "my fix did nothing".
+
+## The module contract
+
+```js
+export function create({config}) -> {
+    actor,                   // St.Widget, built in the constructor
+    setSize(width, height),  // PHYSICAL px, scale factor already applied
+    updateConfig(config),
+    activate(),              // optional; a click that did not become a drag
+    destroy(),
+}
+```
+
+A `default`-exported class is accepted as a shorthand — the loader instantiates it. A widget
+**never** decides where it sits, how much of the grid it takes or which monitor it is on. All of
+that arrives resolved, as pixels, in `setSize()`.
+
+## `src/widgetManifest.js` — NEW, owner: **agent 1**
+
+`GLib` + `Gio` only, for exactly the reason `deskLayout.js` is: `prefs.js` reuses it.
+
+- `widgetSearchPaths()` — the two roots, in scan order; the last one wins a tie.
+- `loadManifests(cancellable)` → `Promise<Map<id, descriptor>>`, async Gio. **Shell.**
+- `loadManifestsSync()` → `Map<id, descriptor>`. **`prefs.js` only** — same licence the folder
+  `query_info()` already has there: a stalled preferences window is not a stalled compositor.
+- `parseManifest(raw, dirPath, dirName)` → frozen descriptor or `null`.
+- `constraintsFrom(mapOrThunk)` → `(type) => limits|null`, the only thing `WidgetStore` is told
+  about a type.
+
+The extension root comes from this file's own `import.meta.url` (`<root>/src/widgetManifest.js`),
+not from a parameter: `prefs.js` knows its `this.path` but `DeskManager` knows no path at all, and
+threading one down three layers to reach here would be pure noise.
+
+## `src/widgetRegistry.js` — REWRITTEN, owner: **agent 1**
+
+- `loadWidgets({force, cancellable})` → `Promise<Map<id, definition>>`. Idempotent: a second call
+  returns the same Promise. `force: true` re-reads the disk, which sees a **new package** but never
+  an **edit** to a package already imported — GJS keeps every module it has loaded, so that still
+  costs a logout.
+- `widgetDefinition(type)` → `null` while loading and for an unknown type.
+- `availableWidgets()` → what the background menu offers.
+- `widgetConstraints` — bound to the **live** catalogue, because the store is constructed before
+  `loadWidgets()` resolves and a snapshot taken then would always be empty.
+
+**Loading is async and that is not negotiable.** Scanning manifests is I/O, and I/O inside the shell
+is never synchronous; `import()` of an ES module returns a Promise by definition of the language.
+The visible consequence is that widgets appear a few frames after the icons. During that window
+`widgetDefinition()` answers `null` and the surfaces draw no widget at all — no error, no lost
+record.
+
+**The catalogue survives `disable()` on purpose, and `DeskManager.destroy()` does not clear it.**
+Every appearance change destroys and rebuilds the manager; clearing here would make widgets blink on
+every drag of a slider. There is no leak to avoid either — GJS holds every imported module forever,
+so the catalogue holds nothing the module cache did not already hold.
+
+## `src/widgetStore.js` — the store knows NO widget type
+
+`new WidgetStore(settings, {constraints})`. `constraints(type)` answers `defaultColSpan`,
+`defaultRowSpan`, `minColSpan`, `minRowSpan`, `resizable` and `defaultConfig`, or `null`.
+
+- `resizable === false` → the footprint **is** `defaultGridSize`, whatever is stored. That is what
+  keeps a 2×2 calendar 2×2 without this file knowing the word "calendar".
+- `constraints()` returning `null` — package not installed, catalogue not loaded yet, or a record
+  written by a newer version — means the record is **preserved verbatim and simply not drawn**. Same
+  rule as an unknown id in `desk-items`: a loop that "cleans up what it does not recognise" is how an
+  old version deletes a new version's work.
+- `addImage()` is **gone**. `add(type, {monitor, colSpan, rowSpan, config})` covers it; the footprint
+  and the initial config come from the manifest.
+
+## `src/widgetHost.js`, `src/widgetMenu.js` — no type checks
+
+The host reads `styleClass`, `minWidth`, `minHeight` and `resizable` from the definition. The menu
+receives `configItems: [{label, action}]`, built by the host from the manifest's `file` settings —
+a package declaring `{"type": "file", "label": "Imagem"}` gets "Mudar imagem…" without anything in
+`src/` knowing what an image is. `onChooseFile(key, label)` replaces `onChangeImage()`.
+
+## `src/deskSurface.js` — a record with no package keeps its place
+
+`refreshWidgets()` skips a record whose type has no definition, warning **once per type**, and
+leaves the record alone. Its footprint is still reserved by `_resolveWidgetCollisions()`, so the
+widget returns to exactly where it was when the package comes back. The background menu receives
+`widgets` as a **function**, resolved when the menu is built, because the catalogue is async and the
+menu is constructed on the first right-click.
+
+## What must NOT happen
+
+- Do not write a widget type name anywhere under `src/`. That was the whole point.
+- Do not make the widget choose its own position, footprint or monitor. It is told, in pixels.
+- Do not delete a record whose package is missing.
+- Do not load manifests synchronously inside the shell, and do not try to make `import()` synchronous
+  — there is no such thing.

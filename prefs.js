@@ -7,6 +7,7 @@ import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/
 
 import { DeskLayout, DeskItemType, parseDeskId } from './src/deskLayout.js';
 import { WidgetStore } from './src/widgetStore.js';
+import { loadManifestsSync, constraintsFrom } from './src/widgetManifest.js';
 
 // Limites idênticos ao <range> da key "icon-size" no gschema (e a
 // SIZE.ICON_MIN/ICON_MAX em src/config.js): um Gtk.Adjustment fora do range
@@ -111,25 +112,102 @@ export default class ArcDeskPreferences extends ExtensionPreferences {
         this._buildWidgetsPage(window, settings);
     }
 
+    /**
+     * Página "Widgets".
+     *
+     * Os MANIFESTS são a fonte da verdade aqui também. Este processo não
+     * enxerga a shell, logo não há registry para consultar — e é justamente
+     * por isso que o catálogo mora em arquivos de dados no disco em vez de
+     * numa tabela dentro do `gnome-shell`. A varredura é síncrona porque
+     * aqui isso é permitido: uma janela de preferências parada não é um
+     * compositor parado (a mesma licença do `query_info()` das pastas).
+     *
+     * Só aparecem aqui os pacotes que declaram um ajuste do tipo `file`.
+     * São exatamente os que NÃO conseguem nascer prontos do menu do fundo,
+     * porque falta um caminho que só um seletor de arquivos sabe pedir.
+     * Todos os outros se adicionam com o botão direito na área de trabalho.
+     */
     _buildWidgetsPage(window, settings) {
-        const store = new WidgetStore(settings);
+        const manifests = loadManifestsSync();
+        const store = new WidgetStore(settings, {
+            constraints: constraintsFrom(manifests),
+        });
         const page = new Adw.PreferencesPage({
             title: 'Widgets',
             icon_name: ICON.WIDGETS_PAGE,
         });
         window.add(page);
+
+        const packages = [...manifests.values()]
+            .filter(descriptor => descriptor.fileSettings.length > 0)
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        const rebuilders = [];
+        if (packages.length) {
+            for (const descriptor of packages) {
+                rebuilders.push(
+                    this._buildWidgetGroup(window, page, store, descriptor));
+            }
+        } else {
+            page.add(new Adw.PreferencesGroup({
+                title: 'Widgets',
+                description: 'No installed widget package needs a file to be ' +
+                    'created. Right-click the desktop to add widgets.',
+            }));
+        }
+
+        // Declarado ANTES de `rebuildAll` porque a função o lê: um `let`
+        // depois da primeira chamada seria uma TDZ, não um `undefined`.
+        let disposed = false;
+        const rebuildAll = () => {
+            // A janela pode ter sido fechada entre a escrita externa e este
+            // callback; mexer nas linhas depois disso é tocar em widgets GTK
+            // já destruídos.
+            if (disposed) return;
+            for (const rebuild of rebuilders) rebuild();
+        };
+        rebuildAll();
+
+        const unsubscribe = store.onExternalChange(rebuildAll);
+        const cleanup = () => {
+            if (disposed) return;
+            disposed = true;
+            try { unsubscribe?.(); } catch (_) {}
+            try { store.destroy(); } catch (_) {}
+        };
+        window.connect('close-request', () => { cleanup(); return false; });
+        window.connect('destroy', cleanup);
+    }
+
+    /**
+     * Um grupo por pacote: o botão de criar e a lista de instâncias.
+     *
+     * @param {Adw.PreferencesWindow} window
+     * @param {Adw.PreferencesPage} page
+     * @param {WidgetStore} store
+     * @param {object} descriptor o manifest já validado
+     * @returns {() => void} refaz as linhas deste grupo
+     */
+    _buildWidgetGroup(window, page, store, descriptor) {
+        // O PRIMEIRO ajuste de arquivo é o que identifica a instância na
+        // lista. Um pacote com dois arquivos continua funcionando; só o
+        // primeiro vira título de linha, e os outros se trocam pelo menu do
+        // widget na área de trabalho.
+        const setting = descriptor.fileSettings[0];
+        const grid = `${descriptor.defaultColSpan} × ${descriptor.defaultRowSpan}`;
         const group = new Adw.PreferencesGroup({
-            title: 'Image widgets',
-            description: 'Images start at 4 × 4 grid cells. Moving and resizing always snaps back to the desktop grid.',
+            title: descriptor.name,
+            description: `Starts at ${grid} grid cells. Moving and resizing ` +
+                'always snaps back to the desktop grid.',
         });
         page.add(group);
 
         const addRow = new Adw.ActionRow({
-            title: 'Add image',
-            subtitle: 'PNG, JPEG, WebP and other formats supported by GNOME.',
+            title: `Add ${descriptor.name.toLowerCase()}`,
+            subtitle: `Choose the file for "${setting.label}".`,
         });
         const addButton = new Gtk.Button({
-            label: 'Choose image…',
+            label: 'Choose file…',
             valign: Gtk.Align.CENTER,
         });
         addRow.add_suffix(addButton);
@@ -137,17 +215,15 @@ export default class ArcDeskPreferences extends ExtensionPreferences {
         group.add(addRow);
 
         let rows = [];
-        let disposed = false;
         const rebuild = () => {
-            if (disposed) return;
             for (const row of rows) group.remove(row);
             rows = [];
             store.reload();
             for (const widget of store.list()) {
-                if (widget.type !== 'image') continue;
-                const path = widget.config?.imagePath ?? '';
+                if (widget.type !== descriptor.id) continue;
+                const path = widget.config?.[setting.key] ?? '';
                 const row = new Adw.ActionRow({
-                    title: GLib.path_get_basename(path) || 'Image',
+                    title: GLib.path_get_basename(path) || descriptor.name,
                     subtitle: path,
                     subtitle_lines: 1,
                 });
@@ -176,23 +252,24 @@ export default class ArcDeskPreferences extends ExtensionPreferences {
 
         addButton.connect('clicked', () => {
             const chooser = new Gtk.FileChooserNative({
-                title: 'Choose an image',
+                title: `Choose a file for "${setting.label}"`,
                 transient_for: window,
                 action: Gtk.FileChooserAction.OPEN,
                 accept_label: 'Add',
                 cancel_label: 'Cancel',
             });
-            const filter = new Gtk.FileFilter();
-            filter.set_name('Images');
-            filter.add_mime_type('image/*');
-            chooser.add_filter(filter);
+            for (const filter of this._fileFilters(descriptor, setting))
+                chooser.add_filter(filter);
             chooser.connect('response', (_dialog, response) => {
                 if (response === Gtk.ResponseType.ACCEPT) {
                     const path = chooser.get_file()?.get_path();
-                    if (path) {
-                        store.addImage(path);
+                    // A pegada e o resto da config vêm do manifest; aqui só
+                    // entra o caminho, que é a única coisa que o seletor sabe.
+                    if (path && store.add(descriptor.id, {
+                        config: {[setting.key]: path},
+                    })) {
                         rebuild();
-                        this._toast(window, 'Image widget added.');
+                        this._toast(window, `${descriptor.name} added.`);
                     }
                 }
                 chooser.destroy();
@@ -200,16 +277,26 @@ export default class ArcDeskPreferences extends ExtensionPreferences {
             chooser.show();
         });
 
-        rebuild();
-        const unsubscribe = store.onExternalChange(rebuild);
-        const cleanup = () => {
-            if (disposed) return;
-            disposed = true;
-            try { unsubscribe?.(); } catch (_) {}
-            try { store.destroy(); } catch (_) {}
-        };
-        window.connect('close-request', () => { cleanup(); return false; });
-        window.connect('destroy', cleanup);
+        return rebuild;
+    }
+
+    /**
+     * Filtros do seletor, declarados pelo manifest em `mimeTypes`. Sem
+     * declaração o seletor não filtra nada — um pacote que aceita qualquer
+     * arquivo não deve ter os seus escondidos por um palpite nosso.
+     *
+     * @param {object} descriptor o manifest já validado
+     * @param {{key: string, label: string}} setting
+     * @returns {Gtk.FileFilter[]}
+     */
+    _fileFilters(descriptor, setting) {
+        const declared = descriptor.settings?.[setting.key]?.mimeTypes;
+        const mimeTypes = Array.isArray(declared) ? declared : [];
+        if (!mimeTypes.length) return [];
+        const filter = new Gtk.FileFilter();
+        filter.set_name(setting.label);
+        for (const mimeType of mimeTypes) filter.add_mime_type(mimeType);
+        return [filter];
     }
 
     /** Página "Appearance": tamanho do ícone, tema, rótulo e origem da grade. */

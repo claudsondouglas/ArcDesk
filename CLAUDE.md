@@ -50,7 +50,14 @@ src/
 ├── ghostFlight.js        — GhostFlight: adopts the dnd drag actor and flies it into its slot.
 ├── fullscreenWatcher.js  — FullscreenWatcher: primary monitor fullscreen → stop painting. One
 │                           instance, owned by the manager.
-└── dingWatcher.js        — warnIfDingActive(): the one-time "DING is also drawing here" notice.
+├── dingWatcher.js        — warnIfDingActive(): the one-time "DING is also drawing here" notice.
+├── widgetManifest.js     — reads and validates the packages' manifest.json. GLib + Gio only.
+├── widgetRegistry.js     — the catalogue: scans the manifests and import()s the entry modules.
+├── widgetStore.js        — persistence of the widget instances (`desk-widgets`). Knows no type.
+├── widgetHost.js         — WidgetHost: one instance's actor, its move/resize gesture and its menu.
+└── widgetMenu.js         — the widget's context menu, built from the manifest's settings.
+
+widgets/<id>/             — ONE WIDGET PACKAGE: manifest.json + the entry module. Not part of src/.
 ```
 
 One class = one file = one responsibility. **Anything that needs cleanup never lives loose outside a
@@ -167,6 +174,58 @@ crosses onto another screen reaches **that** surface's delegate on its own. What
   someone else's item landed here; the manager refreshes all surfaces once. It returning `false`
   means the manager declined and the caller treats the drop as refused.
 
+### A widget is a package, not code inside ArcDesk
+
+The desktop also holds **widgets** — a calendar, an image, the Codex and Claude usage cards. None of
+them are known to `src/`. A widget is a directory with a `manifest.json` and one ES module, found in
+one of two places:
+
+```
+<extension>/widgets/<id>/               the ones that ship in the box
+~/.local/share/arcdesk/widgets/<id>/    the user's, and they WIN a tie, with a warning
+```
+
+**ArcDesk owns placement; the package owns the drawing.** The grid position, the footprint in cells,
+the monitor and the pixel size are decided here — by `_widgetGridPlacement()` and
+`_resolveWidgetCollisions()` in `deskSurface.js` — and arrive at the package already resolved, as
+pixels, through `setSize(width, height)`. A widget never states where it is.
+
+The module contract is five members, and a `default`-exported class is accepted as a shorthand:
+
+```js
+export function create({config}) -> {actor, setSize(w, h), updateConfig(config), activate(), destroy()}
+```
+
+- **The manifest is the source of truth, not the module.** `prefs.js` is another process; a
+  catalogue living in the shell is invisible to it, and the Widgets page has to know which types
+  exist and which of them need a file. So everything needed to *place* and *offer* a widget is in
+  the JSON, and the `.js` is imported only when the widget is going to be painted. `defaultGridSize`,
+  `minGridSize`, `minSize`, `resizable`, `styleClass`, `defaultConfig` and `settings` all live there.
+  `resizable: false` **pins** the footprint to `defaultGridSize` — that is what keeps the calendar
+  2×2 without any file under `src/` knowing the word "calendar".
+- **The directory is the identity.** A manifest whose `id` differs from its directory name is
+  rejected, and `entry` must be a bare filename — a data file does not get to pick which module of
+  the system the shell imports.
+- **Loading is asynchronous, and there is no way around it.** Scanning manifests is I/O, which
+  inside the shell is never synchronous, and `import()` returns a Promise by definition of the
+  language. Widgets therefore appear a few frames after the icons. `DeskManager` calls
+  `loadWidgets()` in its constructor and reconciles every surface when it resolves; until then
+  `widgetDefinition()` answers `null` and nothing is drawn.
+- **A record whose package is missing keeps its place.** It is not drawn, it is warned about once
+  per type, its footprint stays reserved, and it comes back exactly where it was when the package
+  returns. Same discipline as an unknown id in `desk-items`, for the same reason.
+- **The catalogue survives `disable()`, and `DeskManager.destroy()` does not clear it.** Every
+  appearance key rebuilds the manager; clearing there would make widgets blink on each drag of a
+  slider. Nothing leaks — GJS keeps every imported module forever anyway, which is also why
+  `loadWidgets({force: true})` sees a **new package** but never an **edit** to one already loaded.
+  For an edit it is the usual price: log out and back in.
+- **`src/widgetManifest.js` may import only `GLib` and `Gio`**, for exactly the reason
+  `deskLayout.js` may: `prefs.js` reuses it. Its sync twin `loadManifestsSync()` is for that
+  process only.
+
+To write a widget, create the directory and drop the two files in. Nothing in `src/` changes — and
+if you find yourself typing a widget's name into a file under `src/`, that is the bug.
+
 ### Why popups and menus are chrome
 
 `FolderPopup` and `DeskIconMenu` must **not** live on the desktop layer. Everything in
@@ -276,6 +335,7 @@ Data keys in `org.gnome.shell.extensions.arcdesk`:
 | `desk-placements` | `s` (JSON) | `{"app:firefox.desktop": {"col": 0, "row": 2, "mon": 1}}` |
 | `desk-folders` | `s` (JSON) | `{"<bare-uuid>": {"name": "Games", "apps": ["steam.desktop"]}}` |
 | `desk-item-names` | `s` (JSON) | custom display names keyed by the complete app/path item id |
+| `desk-widgets` | `s` (JSON) | `{"<uuid>": {"type": "calendar", "monitor": 0, "col": 2, "row": 1, "colSpan": 2, "rowSpan": 2, "config": {}}}` |
 
 `mon` is the monitor index, and it is **optional on read**: a record without it was written by v1,
 which only ever drew on the primary monitor, so that is what its absence *means* — not "unknown".
@@ -450,6 +510,11 @@ folder's icon is fine there — a stalled preferences window is not a stalled co
   leave the record alone — same discipline as the col/row clamp.
 - Don't use `Main.pushModal` for desktop selection; use normal keyboard focus.
 - Don't reflow the desktop. Positions are the user's, not ours.
+- Don't write a widget's type name into any file under `src/`. Declare it in the package's
+  `manifest.json`; that separation is the only reason a widget can be written without touching the
+  extension.
+- Don't delete a widget record whose package is not installed, and don't load manifests
+  synchronously inside the shell.
 - Don't rebuild the grid inline from `acceptDrop`.
 - Don't use `@import` in the stylesheet: `St`'s `parse_stylesheet()` sets `app_data = FALSE`, so
   imported rules land at cascade origin 0 (UA) instead of 6 (extension) and lose to a user theme's

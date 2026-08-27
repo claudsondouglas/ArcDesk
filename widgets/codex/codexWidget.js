@@ -325,3 +325,8 @@ export class CodexWidget {
         this._state = null;
     }
 }
+
+/** Fábrica exigida pelo loader de widgets (`src/widgetRegistry.js`). */
+export function create(params = {}) {
+    return new CodexWidget(params);
+}

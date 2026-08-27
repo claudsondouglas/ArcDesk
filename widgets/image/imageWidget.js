@@ -36,3 +36,8 @@ export class ImageWidget {
         this._actor = null;
     }
 }
+
+/** Fábrica exigida pelo loader de widgets (`src/widgetRegistry.js`). */
+export function create(params = {}) {
+    return new ImageWidget(params);
+}
