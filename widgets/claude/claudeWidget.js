@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Soup from 'gi://Soup';
 import St from 'gi://St';
 
 import { SignalTracker, TimeoutTracker } from '../../src/trackers.js';
@@ -11,6 +12,11 @@ const CACHE = Object.freeze({
     DIRECTORY: 'claude-code',
     SNAPSHOT: 'state.json',
     PATTERN: '*.json',
+});
+const OAUTH = Object.freeze({
+    USAGE_ENDPOINT: 'https://api.anthropic.com/api/oauth/usage',
+    BETA_HEADER: 'oauth-2025-04-20',
+    HTTP_TIMEOUT_S: 10,
 });
 
 function _clampPercent(value) {
@@ -33,6 +39,10 @@ export class ClaudeWidget {
         this._cacheRoot = GLib.build_filenamev([
             GLib.get_user_cache_dir(), 'arcdesk', CACHE.DIRECTORY,
         ]);
+        this._credentialsPath = GLib.build_filenamev([
+            GLib.get_home_dir(), '.claude', '.credentials.json',
+        ]);
+        this._httpSession = new Soup.Session({ timeout: OAUTH.HTTP_TIMEOUT_S });
 
         this._actor = new St.Widget({
             style_class: 'arcdesk-claude-widget',
@@ -108,10 +118,12 @@ export class ClaudeWidget {
 
         this._ensureMonitor();
         this._refresh();
+        this._probeLimits();
         this._timeouts.add(TIMING.REFRESH_MS, () => {
             if (this._destroyed) return GLib.SOURCE_REMOVE;
             this._render();
             this._refresh();
+            this._probeLimits();
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -171,21 +183,29 @@ export class ClaudeWidget {
                 .map(item => item.path);
             if (paths.length === 0) {
                 this._refreshing = false;
-                this._showUnavailable('Integração ainda sem dados');
+                if (!this._hasUsableState()) this._showUnavailable('Integração ainda sem dados');
                 return;
             }
             this._readLegacyCandidates(paths);
         }, () => {
             this._refreshing = false;
-            this._showUnavailable('Ative a integração do Claude Code');
+            if (!this._hasUsableState()) this._showUnavailable('Ative a integração do Claude Code');
         });
+    }
+
+    /** A sondagem ao vivo do endpoint OAuth roda em paralelo com a leitura
+     * do cache local — se o cache nao existir ou vier vazio, isso nao pode
+     * apagar uma cota que a sondagem ja tenha trazido. */
+    _hasUsableState() {
+        const limits = this._state?.rate_limits;
+        return !!(limits && (this._hasLimit(limits.five_hour) || this._hasLimit(limits.seven_day)));
     }
 
     _readLegacyCandidates(paths, index = 0, merged = null) {
         if (index >= paths.length) {
             this._refreshing = false;
             if (!merged) {
-                this._showUnavailable('Integração ainda sem dados');
+                if (!this._hasUsableState()) this._showUnavailable('Integração ainda sem dados');
                 return;
             }
             this._state = merged;
@@ -304,6 +324,130 @@ export class ClaudeWidget {
 
     _releaseCancellable(cancellable) {
         this._cancellables.delete(cancellable);
+    }
+
+    /**
+     * O bridge do statusLine so escreve enquanto o Claude Code TUI esta
+     * aberto e alguem configurou o hook (ver README). A sondagem direta no
+     * endpoint OAuth da Anthropic e autoritativa e nao depende de nenhum dos
+     * dois — por isso, quando responde, ela sobrescreve os percentuais que o
+     * bridge tinha; o context_window continua vindo so do bridge, que e a
+     * unica fonte que o tem.
+     */
+    _probeLimits() {
+        if (this._destroyed) return;
+        this._readOauthCredentials(oauth => {
+            if (this._destroyed || !oauth?.accessToken) return;
+            const expiresAt = Number(oauth.expiresAt);
+            if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now()) return;
+            this._fetchUsageLimits(oauth.accessToken, limits => {
+                if (this._destroyed || !limits) return;
+                this._applyProbedLimits(limits);
+            });
+        });
+    }
+
+    _readOauthCredentials(callback) {
+        const file = Gio.File.new_for_path(this._credentialsPath);
+        const cancellable = this._newCancellable();
+        file.load_contents_async(cancellable, (source, result) => {
+            this._releaseCancellable(cancellable);
+            if (this._destroyed) return;
+            try {
+                const [ok, contents] = source.load_contents_finish(result);
+                if (!ok) throw new Error('credentials read failed');
+                const parsed = JSON.parse(new TextDecoder().decode(contents));
+                const oauth = parsed?.claudeAiOauth;
+                callback(oauth && typeof oauth === 'object' ? oauth : null);
+            } catch (_e) {
+                callback(null);
+            }
+        });
+    }
+
+    _fetchUsageLimits(accessToken, callback) {
+        const message = Soup.Message.new('GET', OAUTH.USAGE_ENDPOINT);
+        message.request_headers.append('Authorization', `Bearer ${accessToken}`);
+        message.request_headers.append('anthropic-beta', OAUTH.BETA_HEADER);
+        message.request_headers.append('Accept', 'application/json');
+        const cancellable = this._newCancellable();
+        this._httpSession.send_and_read_async(
+            message, GLib.PRIORITY_DEFAULT, cancellable, (source, result) => {
+                this._releaseCancellable(cancellable);
+                if (this._destroyed) return;
+                try {
+                    const bytes = source.send_and_read_finish(result);
+                    if (message.get_status() !== 200)
+                        throw new Error(`usage endpoint status ${message.get_status()}`);
+                    const payload = JSON.parse(new TextDecoder().decode(bytes.get_data()));
+                    callback(this._parseUsagePayload(payload));
+                } catch (e) {
+                    if (!cancellable.is_cancelled())
+                        logError(e, '[ArcDesk] falha ao consultar limites do Claude Code');
+                    callback(null);
+                }
+            });
+    }
+
+    /** Converte os buckets da API (fracao 0-1 ou percentual 0-100, a
+     * depender da versao do payload) para o mesmo `used_percentage` 0-100
+     * que `_limitState()` ja espera do bridge do statusLine. */
+    _parseUsagePayload(payload) {
+        if (!payload || typeof payload !== 'object') return null;
+        const session = payload.five_hour;
+        const weekly = payload.seven_day_oauth_apps ?? payload.seven_day;
+        const rawValues = [session?.utilization, weekly?.utilization]
+            .filter(v => v !== undefined && v !== null)
+            .map(Number);
+        const percentScale = rawValues.some(v => Number.isFinite(v) && v >= 1);
+        const toPercent = (value) => {
+            const n = Number(value);
+            if (!Number.isFinite(n) || n < 0) return null;
+            return Math.max(0, Math.min(100, percentScale || n > 1 ? n : n * 100));
+        };
+
+        const result = {};
+        const sessionPercent = toPercent(session?.utilization);
+        if (sessionPercent !== null) {
+            result.five_hour = {
+                used_percentage: sessionPercent,
+                resets_at: this._toEpochSeconds(session.resets_at),
+                updated_at: Math.floor(Date.now() / 1000),
+            };
+        }
+        const weeklyPercent = toPercent(weekly?.utilization);
+        if (weeklyPercent !== null) {
+            result.seven_day = {
+                used_percentage: weeklyPercent,
+                resets_at: this._toEpochSeconds(weekly.resets_at),
+                updated_at: Math.floor(Date.now() / 1000),
+            };
+        }
+        return Object.keys(result).length > 0 ? result : null;
+    }
+
+    _toEpochSeconds(value) {
+        if (value === null || value === undefined) return null;
+        if (typeof value === 'number')
+            return Math.floor(value > 1e12 ? value / 1000 : value);
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+    }
+
+    _applyProbedLimits(limits) {
+        const base = this._state && typeof this._state === 'object' ? this._state : {
+            captured_at: Math.floor(Date.now() / 1000),
+            context_window: {},
+            rate_limits: {},
+        };
+        this._state = {
+            ...base,
+            rate_limits: {
+                ...(base.rate_limits ?? {}),
+                ...limits,
+            },
+        };
+        this._render();
     }
 
     _render() {
@@ -450,6 +594,7 @@ export class ClaudeWidget {
         try { this._actor?.destroy(); } catch (_) {}
         this._actor = null;
         this._state = null;
+        this._httpSession = null;
     }
 }
 

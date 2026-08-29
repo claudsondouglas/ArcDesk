@@ -4,8 +4,10 @@ import GLib from 'gi://GLib';
 import St from 'gi://St';
 
 import { SignalTracker } from '../../src/trackers.js';
+import { fetchCodexLimits } from './codexRpcClient.js';
 
 const REFRESH_SECONDS = 15;
+const RPC_REFRESH_SECONDS = 60;
 const TAIL_LINES = 240;
 
 function _clampPercent(value) {
@@ -18,7 +20,9 @@ export class CodexWidget {
         this._destroyed = false;
         this._refreshing = false;
         this._timerId = 0;
+        this._rpcTimerId = 0;
         this._cancellable = new Gio.Cancellable();
+        this._rpcCancellables = new Set();
         this._signals = new SignalTracker();
         this._sessionPath = null;
         this._state = null;
@@ -102,6 +106,14 @@ export class CodexWidget {
                 this._refresh();
                 return GLib.SOURCE_CONTINUE;
             });
+
+        this._probeRpcLimits();
+        this._rpcTimerId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT, RPC_REFRESH_SECONDS, () => {
+                if (this._destroyed) return GLib.SOURCE_REMOVE;
+                this._probeRpcLimits();
+                return GLib.SOURCE_CONTINUE;
+            });
     }
 
     get actor() { return this._actor; }
@@ -149,14 +161,14 @@ export class CodexWidget {
                 .sort((a, b) => b.time - a.time)[0];
             if (!latest) {
                 this._refreshing = false;
-                this._showUnavailable('Nenhuma sessão encontrada');
+                if (!this._hasUsableState()) this._showUnavailable('Nenhuma sessão encontrada');
                 return;
             }
             this._sessionPath = latest.path;
             this._readSession(latest.path);
         }, () => {
             this._refreshing = false;
-            this._showUnavailable('Codex ainda não foi utilizado');
+            if (!this._hasUsableState()) this._showUnavailable('Codex ainda não foi utilizado');
         });
     }
 
@@ -177,15 +189,68 @@ export class CodexWidget {
                 } catch (_) {}
             }
             if (!event) {
-                this._showUnavailable('Aguardando dados de uso');
+                if (!this._hasUsableState()) this._showUnavailable('Aguardando dados de uso');
                 return;
             }
             this._state = event;
             this._render();
         }, () => {
             this._refreshing = false;
-            this._showUnavailable('Não foi possível ler a sessão');
+            if (!this._hasUsableState()) this._showUnavailable('Não foi possível ler a sessão');
         });
+    }
+
+    /** A leitura local pode terminar depois da sondagem RPC e nao achar
+     * nada — isso nao pode apagar uma cota ao vivo que o RPC ja trouxe. */
+    _hasUsableState() {
+        const limits = this._state?.rate_limits;
+        return !!(limits && (limits.primary || limits.secondary));
+    }
+
+    /**
+     * Leitura das sessoes locais so reflete a cota vista na ultima chamada do
+     * Codex. O `account/rateLimits/read` do `codex app-server` e uma leitura
+     * ao vivo, autoritativa mesmo sem uso recente, e por isso sobrescreve o
+     * que a leitura local tiver — mas so quando o RPC responde; do contrario
+     * a leitura local continua sendo o unico dado que temos.
+     */
+    _probeRpcLimits() {
+        if (this._destroyed) return;
+        const cancellable = new Gio.Cancellable();
+        this._rpcCancellables.add(cancellable);
+        fetchCodexLimits(cancellable).then(result => {
+            this._rpcCancellables.delete(cancellable);
+            if (this._destroyed || !result) return;
+            this._applyRpcLimits(result);
+        }).catch(e => {
+            this._rpcCancellables.delete(cancellable);
+            if (!this._destroyed) logError(e, '[ArcDesk] falha ao consultar limites do Codex via RPC');
+        });
+    }
+
+    _applyRpcLimits({rateLimits}) {
+        const toLocalWindow = (window) => {
+            if (!window || !Number.isFinite(window.usedPercent)) return null;
+            return {
+                used_percent: window.usedPercent,
+                window_minutes: Number.isFinite(window.windowDurationMins)
+                    ? window.windowDurationMins : null,
+                resets_at: Number.isFinite(window.resetsAt) ? window.resetsAt : null,
+            };
+        };
+        const primary = toLocalWindow(rateLimits?.primary);
+        const secondary = toLocalWindow(rateLimits?.secondary);
+        if (!primary && !secondary) return;
+
+        this._state = {
+            ...(this._state ?? {}),
+            rate_limits: {
+                ...(this._state?.rate_limits ?? {}),
+                ...(primary ? {primary} : {}),
+                ...(secondary ? {secondary} : {}),
+            },
+        };
+        this._render();
     }
 
     _run(argv, onSuccess, onFailure) {
@@ -318,6 +383,10 @@ export class CodexWidget {
         this._destroyed = true;
         if (this._timerId) GLib.source_remove(this._timerId);
         this._timerId = 0;
+        if (this._rpcTimerId) GLib.source_remove(this._rpcTimerId);
+        this._rpcTimerId = 0;
+        for (const cancellable of this._rpcCancellables) cancellable.cancel();
+        this._rpcCancellables.clear();
         this._cancellable.cancel();
         this._signals.disconnectAll();
         try { this._actor?.destroy(); } catch (_) {}

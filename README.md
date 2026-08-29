@@ -246,14 +246,22 @@ fixo de 2 × 2 células e nenhuma configuração: o botão direito só oferece *
 **Uso do Codex.** Lê a sessão local mais recente em `~/.codex/sessions` e apresenta duas barras
 independentes: a janela de sessão (atualmente 5 horas) e o limite semanal. Os dois valores vêm do
 evento de uso local do Codex; se uma das janelas ainda não estiver disponível, a outra continua
-sendo mostrada.
+sendo mostrada. A cada minuto o widget também sobe um `codex app-server` (`widgets/codex/codexRpcClient.js`)
+e chama `account/rateLimits/read` via JSON-RPC — uma leitura ao vivo e autoritativa, que atualiza
+o cartão mesmo sem uso recente do Codex. Não exige nenhuma configuração além de ter `codex` no
+`PATH` e já estar autenticado; se o RPC falhar, a leitura local continua sendo mostrada.
 
 **Uso do Claude Code.** Apresenta duas barras independentes: a janela de 5 horas e o limite
-semanal. O Claude Code entrega esses dados ao comando de `statusLine`; o bridge
-`widgets/claude/claudeStatusBridge.py` grava apenas modelo, percentuais e horários de reset em
-`~/.cache/arcdesk/claude-code/`. O snapshot consolidado preserva o último valor válido quando
-uma leitura omite as cotas; depois do horário de reset, o cartão passa a indicar a janela como
-livre até o Claude informar novo consumo. Para ativá-lo, adicione às configurações do Claude Code:
+semanal. Duas fontes alimentam o cartão: o Claude Code pode entregar esses dados ao comando de
+`statusLine`, cujo bridge `widgets/claude/claudeStatusBridge.py` grava modelo, percentuais e
+horários de reset em `~/.cache/arcdesk/claude-code/` — mas isso só atualiza enquanto o TUI está
+aberto. Por isso o widget também sonda `https://api.anthropic.com/api/oauth/usage` a cada minuto,
+usando o token OAuth de `~/.claude/.credentials.json`, e essa leitura ao vivo sobrescreve os
+percentuais sempre que responde (o `context_window`, que a API não expõe, continua vindo só do
+bridge). O snapshot consolidado preserva o último valor válido quando uma leitura omite as cotas;
+depois do horário de reset, o cartão passa a indicar a janela como livre até haver novo consumo.
+O `statusLine` continua opcional — sem ele o cartão já funciona pela sondagem direta — mas quem
+quiser o `context_window` (ou dados quando o token OAuth expirar) pode configurá-lo:
 
 ```json
 {
